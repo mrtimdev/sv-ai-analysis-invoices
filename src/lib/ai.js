@@ -137,4 +137,5 @@ export {
   batchUpdateScansV1,
   analyzeOneServerScan,
   analyzeAndSyncScansPages,
+  exportServerScansExcelV1,
 } from './scanApi.js';

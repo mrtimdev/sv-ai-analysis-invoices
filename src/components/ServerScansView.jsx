@@ -6,6 +6,7 @@ import {
   fetchScanById,
   analyzeOneServerScan,
   batchUpdateScansV1,
+  exportServerScansExcelV1,
 } from '../lib/scanApi.js';
 import {
   getJobManagerSnapshot,
@@ -84,6 +85,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
   const [loadingPage, setLoadingPage] = useState(false);
   const [pageError, setPageError] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [exportingExcel, setExportingExcel] = useState(false);
 
   // Subscribe to the persistent background job manager so state stays live across tab switches & page refreshes
   const [jobSnap, setJobSnap] = useState(initialSnap);
@@ -371,6 +373,35 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
       await loadPage(page, size, sort, filters);
     } catch (err) {
       toast('Batch approve failed: ' + err.message, true);
+    }
+  };
+
+  const handleExportExcel = async ({ selectedOnly = false } = {}) => {
+    if (exportingExcel) return;
+    const ids = selectedOnly ? [...selectedIds] : null;
+    if (selectedOnly && (!ids || !ids.length)) {
+      toast('Select at least one scan first to export selected rows', true);
+      return;
+    }
+    setExportingExcel(true);
+    try {
+      const res = await exportServerScansExcelV1({
+        ids,
+        filters,
+        sort,
+        filename: selectedOnly
+          ? `combined-invoice-items-selected-${ids.length}.xlsx`
+          : 'combined-invoice-items.xlsx',
+      });
+      toast(
+        selectedOnly
+          ? `Exported ${ids.length} selected scan(s) to ${res.filename} ✓`
+          : `Exported filtered scans (${pageData.totalElements.toLocaleString()}) to ${res.filename} ✓`
+      );
+    } catch (err) {
+      toast('Excel export failed: ' + err.message, true);
+    } finally {
+      setExportingExcel(false);
     }
   };
 
@@ -948,6 +979,33 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                 </button>
               </React.Fragment>
             )}
+
+            {selectedIds.size > 0 ? (
+              <button
+                type="button"
+                className="btn primary"
+                onClick={() => handleExportExcel({ selectedOnly: true })}
+                disabled={exportingExcel}
+              >
+                <Ic.export className="ic" />{' '}
+                {exportingExcel
+                  ? 'Exporting Excel…'
+                  : `Export Selected Excel (${selectedIds.size})`}
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              className="btn"
+              onClick={() => handleExportExcel({ selectedOnly: false })}
+              disabled={exportingExcel || pageData.totalElements === 0}
+              title="Export all scans matching current filters using Combined Items Excel format"
+            >
+              <Ic.export className="ic" />{' '}
+              {exportingExcel
+                ? 'Exporting…'
+                : `Export Filtered Excel (${pageData.totalElements.toLocaleString()})`}
+            </button>
 
             <div className="selbox">
               POST Mode:

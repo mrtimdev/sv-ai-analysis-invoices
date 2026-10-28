@@ -17,6 +17,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
   const [apiServerBase, setApiServerBase] = useState(s.apiServerBase || v1Defaults.apiServerBase || 'http://localhost:8080');
   const [v1ListScansPath, setV1ListScansPath] = useState(s.v1ListScansPath || '/v1/list/scans');
   const [v1SingleScanPath, setV1SingleScanPath] = useState(s.v1SingleScanPath || '/v1/{scanId}/scan');
+  const [v1ExportScansPath, setV1ExportScansPath] = useState(s.v1ExportScansPath || '/v1/list/scans/export');
   const [v1UpdateMode, setV1UpdateMode] = useState(s.v1UpdateMode || 'single');
   const [v1PageSize, setV1PageSize] = useState(s.v1PageSize || '50');
   const [v1AutoNextPage, setV1AutoNextPage] = useState(s.v1AutoNextPage !== undefined ? !!s.v1AutoNextPage : true);
@@ -37,6 +38,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
       setApiServerBase(cur.apiServerBase || cfg.apiServerBase || 'http://localhost:8080');
       setV1ListScansPath(cur.v1ListScansPath || '/v1/list/scans');
       setV1SingleScanPath(cur.v1SingleScanPath || '/v1/{scanId}/scan');
+      setV1ExportScansPath(cur.v1ExportScansPath || '/v1/list/scans/export');
       setV1UpdateMode(cur.v1UpdateMode || 'single');
       setV1PageSize(cur.v1PageSize || '50');
       setV1AutoNextPage(cur.v1AutoNextPage !== undefined ? !!cur.v1AutoNextPage : true);
@@ -84,6 +86,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
       apiServerBase: apiServerBase.trim() || 'http://localhost:8080',
       v1ListScansPath: v1ListScansPath.trim() || '/v1/list/scans',
       v1SingleScanPath: v1SingleScanPath.trim() || '/v1/{scanId}/scan',
+      v1ExportScansPath: v1ExportScansPath.trim() || '/v1/list/scans/export',
       v1UpdateMode,
       v1PageSize,
       v1AutoNextPage,
@@ -171,6 +174,14 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                 value={v1SingleScanPath}
                 onChange={(e) => setV1SingleScanPath(e.target.value)}
                 placeholder="/v1/{scanId}/scan or /v1/scanId/scan"
+              />
+            </label>
+            <label className="f" style={{ gridColumn: '1 / -1' }}>
+              Excel Export Endpoint (GET / POST)
+              <input
+                value={v1ExportScansPath}
+                onChange={(e) => setV1ExportScansPath(e.target.value)}
+                placeholder="/v1/list/scans/export or /v1/export/scans"
               />
             </label>
             <label className="f">
