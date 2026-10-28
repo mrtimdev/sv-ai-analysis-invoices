@@ -11,6 +11,7 @@ import {
   cancelServerScansExportJobV1,
   resolveScanImageUrl,
   handleScanImageError,
+  isScanApproved,
 } from '../lib/scanApi.js';
 import {
   getJobManagerSnapshot,
@@ -144,6 +145,12 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
       if (snap.serverJob.lastPageData) {
         setPageData(snap.serverJob.lastPageData);
         setPage(snap.serverJob.page || 0);
+      }
+      if (snap.serverJob.skipApproved !== undefined) {
+        setSkipApproved(snap.serverJob.skipApproved);
+      }
+      if (snap.serverJob.autoNextPage !== undefined) {
+        setAutoNextPage(snap.serverJob.autoNextPage);
       }
     });
   }, []);
@@ -378,6 +385,24 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
       toast('Select at least one scan first', true);
       return;
     }
+    if (selectedOnly && skipApproved) {
+      const selectedScans = pageData.content.filter((r) => targetIds.includes(r.id));
+      const pendingSelected = selectedScans.filter((r) => !isScanApproved(r, scanStatuses));
+      if (selectedScans.length > 0 && pendingSelected.length === 0) {
+        toast(`All ${selectedScans.length} selected scan(s) are already APPROVED. Uncheck "Skip APPROVED" to re-analyze them.`, true);
+        return;
+      }
+    }
+    if (!selectedOnly && skipApproved && !autoNextPage) {
+      const pendingScans = pageData.content.filter((r) => !isScanApproved(r, scanStatuses));
+      if (pageData.content.length > 0 && pendingScans.length === 0) {
+        toast(
+          `All ${pageData.content.length} scans on page ${page + 1} are already APPROVED. Enable "Auto next page" to scan and process subsequent pages, or uncheck "Skip APPROVED" to re-analyze.`,
+          true
+        );
+        return;
+      }
+    }
     await startServerScanJob({
       page,
       size,
@@ -530,7 +555,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
   const allOnPageSelected =
     pageData.content.length > 0 && pageData.content.every((r) => selectedIds.has(r.id));
   const approvedOnPage = pageData.content.filter(
-    (r) => String(r.reviewStatus || '').toUpperCase() === 'APPROVED'
+    (r) => isScanApproved(r, scanStatuses)
   ).length;
   const pendingOnPage = Math.max(0, pageData.content.length - approvedOnPage);
   const remainingOnPage = Math.max(0, runStats.totalOnPage - runStats.currentScanIndex);
@@ -588,8 +613,14 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
               </div>
               <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
                 Updated: <b style={{ color: '#34d399' }}>{runStats.updated}</b> · Analyzed:{' '}
-                <b style={{ color: '#e2e8f0' }}>{runStats.analyzed}</b> · Pages synced:{' '}
-                <b style={{ color: '#e2e8f0' }}>{runStats.pagesProcessed}</b>
+                <b style={{ color: '#e2e8f0' }}>{runStats.analyzed}</b>
+                {runStats.skipped > 0 && (
+                  <span>
+                    {' '}
+                    · Skipped: <b style={{ color: '#a5b4fc' }}>{runStats.skipped}</b>
+                  </span>
+                )}{' '}
+                · Pages synced: <b style={{ color: '#e2e8f0' }}>{runStats.pagesProcessed}</b>
                 {runStats.failed > 0 && (
                   <span>
                     {' '}
@@ -1113,6 +1144,8 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                 <Ic.play className="ic" />{' '}
                 {paused
                   ? 'Resume AI Page Sync'
+                  : skipApproved
+                  ? `Analyze Pending (${pendingOnPage}/${pageData.content.length})${autoNextPage ? ' · Auto-Next' : ''}`
                   : `Analyze Page & Update Backend${autoNextPage ? ' (Auto-Next Page)' : ''}`}
               </button>
             ) : (
@@ -1142,6 +1175,11 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                   onClick={() => handleStartBatch({ selectedOnly: true })}
                 >
                   <Ic.spark className="ic" /> Analyze &amp; POST Selected ({selectedIds.size})
+                  {skipApproved && (
+                    <span style={{ fontSize: 11, opacity: 0.85, marginLeft: 4 }}>
+                      (Skip Approved)
+                    </span>
+                  )}
                 </button>
                 <button
                   type="button"
@@ -1219,6 +1257,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                 fontSize: 12.5,
                 fontWeight: 600,
                 cursor: 'pointer',
+                userSelect: 'none',
               }}
             >
               <input
@@ -1226,8 +1265,10 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                 className="checkbox"
                 checked={autoNextPage}
                 onChange={(e) => {
-                  setAutoNextPage(e.target.checked);
-                  saveServerViewConfig({ autoNextPage: e.target.checked });
+                  const val = e.target.checked;
+                  setAutoNextPage(val);
+                  saveServerViewConfig({ autoNextPage: val });
+                  saveSettings({ v1AutoNextPage: val });
                 }}
                 disabled={running}
               />
@@ -1242,6 +1283,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                 fontSize: 12.5,
                 fontWeight: 600,
                 cursor: 'pointer',
+                userSelect: 'none',
               }}
             >
               <input
@@ -1249,12 +1291,32 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                 className="checkbox"
                 checked={skipApproved}
                 onChange={(e) => {
-                  setSkipApproved(e.target.checked);
-                  saveServerViewConfig({ skipApproved: e.target.checked });
+                  const val = e.target.checked;
+                  setSkipApproved(val);
+                  saveServerViewConfig({ skipApproved: val });
+                  saveSettings({ v1SkipApproved: val });
                 }}
                 disabled={running}
               />
-              Skip APPROVED
+              <span>Skip APPROVED</span>
+              {approvedOnPage > 0 && (
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: skipApproved ? '#059669' : '#64748b',
+                    background: skipApproved ? '#ecfdf5' : '#f1f5f9',
+                    border: '1px solid ' + (skipApproved ? '#a7f3d0' : '#e2e8f0'),
+                    padding: '1px 6px',
+                    borderRadius: 6,
+                  }}
+                  title={`${approvedOnPage} of ${pageData.content.length} scan(s) on this page are already APPROVED`}
+                >
+                  {approvedOnPage === pageData.content.length
+                    ? `all ${approvedOnPage} approved`
+                    : `${approvedOnPage} approved`}
+                </span>
+              )}
             </label>
           </div>
 
@@ -1330,7 +1392,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                 <tbody>
                   {pageData.content.map((scan) => {
                     const st = scanStatuses[scan.id];
-                    const isApproved = String(scan.reviewStatus || '').toUpperCase() === 'APPROVED';
+                    const isApproved = isScanApproved(scan, scanStatuses);
                     const isSelected = inspectedScan && inspectedScan.id === scan.id;
                     return (
                       <tr
@@ -1409,9 +1471,27 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                           </span>
                         </td>
                         <td>
-                          <span className={'badge ' + (isApproved ? 'ok' : 'pend')}>
-                            <span className="dot" /> {scan.reviewStatus || 'PENDING'}
-                          </span>
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <span className={'badge ' + (isApproved ? 'ok' : 'pend')}>
+                              <span className="dot" /> {scan.reviewStatus || (isApproved ? 'APPROVED' : 'PENDING')}
+                            </span>
+                            {skipApproved && isApproved && (
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  color: '#475569',
+                                  background: '#f1f5f9',
+                                  border: '1px solid #cbd5e1',
+                                  padding: '1px 5px',
+                                  borderRadius: 4,
+                                }}
+                                title="Will be skipped during AI pipeline because 'Skip APPROVED' is enabled"
+                              >
+                                SKIP
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td
                           style={{
@@ -1430,7 +1510,13 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                               {st.stage === 'analyzing' && (
                                 <span className="pulse" style={{ marginRight: 6 }} />
                               )}
-                              {st.message}
+                              {st.stage === 'skipped' ? (
+                                <span style={{ color: '#64748b', fontStyle: 'italic' }}>
+                                  {st.message || 'Skipped (Already APPROVED)'}
+                                </span>
+                              ) : (
+                                st.message
+                              )}
                             </span>
                           ) : (
                             scan.originalFilename || '—'
@@ -1443,7 +1529,11 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                             onClick={(e) => runSingleRowAnalyze(scan, e)}
                             disabled={st?.stage === 'analyzing'}
                           >
-                            {st?.stage === 'analyzing' ? 'Analyzing…' : '✦ Analyze & POST'}
+                            {st?.stage === 'analyzing'
+                              ? 'Analyzing…'
+                              : isApproved
+                              ? 'Re-analyze'
+                              : '✦ Analyze & POST'}
                           </button>
                         </td>
                       </tr>
@@ -1457,7 +1547,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
             <div className="v1-cards-grid">
               {pageData.content.map((scan) => {
                 const st = scanStatuses[scan.id];
-                const isApproved = String(scan.reviewStatus || '').toUpperCase() === 'APPROVED';
+                const isApproved = isScanApproved(scan, scanStatuses);
                 const isCardSelected = selectedIds.has(scan.id);
                 return (
                   <div
@@ -1496,9 +1586,27 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                           />
                           #{scan.id}
                         </label>
-                        <span className={'badge ' + (isApproved ? 'ok' : 'pend')}>
-                          <span className="dot" /> {scan.reviewStatus || 'PENDING'}
-                        </span>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <span className={'badge ' + (isApproved ? 'ok' : 'pend')}>
+                            <span className="dot" /> {scan.reviewStatus || (isApproved ? 'APPROVED' : 'PENDING')}
+                          </span>
+                          {skipApproved && isApproved && (
+                            <span
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 700,
+                                color: '#475569',
+                                background: '#f1f5f9',
+                                border: '1px solid #cbd5e1',
+                                padding: '1px 5px',
+                                borderRadius: 4,
+                              }}
+                              title="Will be skipped during AI pipeline because 'Skip APPROVED' is enabled"
+                            >
+                              SKIP
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -1682,12 +1790,12 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                   <span
                     className={
                       'badge ' +
-                      (String(inspectedScan.reviewStatus || '').toUpperCase() === 'APPROVED'
+                      (isScanApproved(inspectedScan, scanStatuses)
                         ? 'ok'
                         : 'pend')
                     }
                   >
-                    <span className="dot" /> {inspectedScan.reviewStatus || 'PENDING'}
+                    <span className="dot" /> {inspectedScan.reviewStatus || (isScanApproved(inspectedScan, scanStatuses) ? 'APPROVED' : 'PENDING')}
                   </span>
                 </div>
                 <div style={{ color: 'var(--muted)', fontWeight: 600 }}>Invoice No.</div>

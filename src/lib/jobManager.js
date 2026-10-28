@@ -76,6 +76,7 @@ let serverJobState = {
     analyzed: 0,
     updated: 0,
     failed: 0,
+    skipped: 0,
     pagesProcessed: 0,
     currentScanIndex: 0,
     totalOnPage: 0,
@@ -209,7 +210,12 @@ export async function startServerScanJob({
   const effectiveFilters = filters ?? serverJobState.filters ?? {};
   const effectiveUpdateMode = updateMode ?? serverJobState.updateMode ?? cfg.v1UpdateMode ?? 'single';
   const effectiveAutoNext = autoNextPage !== undefined ? !!autoNextPage : !!serverJobState.autoNextPage;
-  const effectiveSkipApproved = skipApproved !== undefined ? !!skipApproved : !!serverJobState.skipApproved;
+  const effectiveSkipApproved =
+    skipApproved !== undefined
+      ? !!skipApproved
+      : serverJobState.skipApproved !== undefined
+      ? !!serverJobState.skipApproved
+      : !!cfg.v1SkipApproved;
 
   serverStopFlag = false;
   serverPauseFlag = false;
@@ -223,6 +229,7 @@ export async function startServerScanJob({
         analyzed: 0,
         updated: 0,
         failed: 0,
+        skipped: 0,
         pagesProcessed: 0,
         currentScanIndex: 0,
         totalOnPage: 0,
@@ -240,7 +247,7 @@ export async function startServerScanJob({
     filters: effectiveFilters,
     updateMode: effectiveUpdateMode,
     autoNextPage: onlyScanIds ? false : effectiveAutoNext,
-    skipApproved: onlyScanIds ? false : effectiveSkipApproved,
+    skipApproved: effectiveSkipApproved,
     onlyScanIds,
     stats: baseStats,
   });
@@ -255,7 +262,7 @@ export async function startServerScanJob({
       filters: effectiveFilters,
       updateMode: effectiveUpdateMode,
       autoNextPage: onlyScanIds ? false : effectiveAutoNext,
-      skipApproved: onlyScanIds ? false : effectiveSkipApproved,
+      skipApproved: effectiveSkipApproved,
       onlyScanIds,
       shouldStop: () => serverStopFlag || serverPauseFlag,
       onPageLoaded: (loadedPageData, loadedPageIndex) => {
@@ -322,7 +329,12 @@ export async function startServerScanJob({
           };
         }
 
-        if (evt.stage === 'updated' || evt.stage === 'error' || evt.stage === 'batch_posting') {
+        if (
+          evt.stage === 'updated' ||
+          evt.stage === 'error' ||
+          evt.stage === 'batch_posting' ||
+          evt.stage === 'skipped'
+        ) {
           pushActivityEvent(evt);
         }
 
@@ -339,6 +351,8 @@ export async function startServerScanJob({
           nextStats.analyzed = (serverJobState.stats.analyzed || 0) + 1;
         } else if (evt.stage === 'error') {
           nextStats.failed = (serverJobState.stats.failed || 0) + 1;
+        } else if (evt.stage === 'skipped') {
+          nextStats.skipped = (serverJobState.stats.skipped || 0) + (evt.count || 1);
         }
 
         persistServerJobState({
@@ -350,12 +364,21 @@ export async function startServerScanJob({
         }
       },
       onPageSynced: (info) => {
+        let syncMsg = `Page ${info.page + 1}/${info.totalPages} synced (${info.pageSuccessCount} updated, ${info.pageFailCount} failed`;
+        if (info.totalSkipped) {
+          syncMsg += `, ${info.totalSkipped} skipped`;
+        }
+        syncMsg += ')';
+        if (info.totalSkipped > 0 && info.pageSuccessCount === 0 && info.pageFailCount === 0) {
+          syncMsg = `Page ${info.page + 1}/${info.totalPages}: Skipped ${info.totalSkipped} approved scan(s)`;
+        }
+
         persistServerJobState({
           page: info.page,
           stats: {
             ...serverJobState.stats,
             pagesProcessed: (serverJobState.stats.pagesProcessed || 0) + 1,
-            bannerMsg: `Page ${info.page + 1}/${info.totalPages} synced (${info.pageSuccessCount} updated, ${info.pageFailCount} failed)`,
+            bannerMsg: syncMsg,
           },
         });
       },
@@ -375,6 +398,10 @@ export async function startServerScanJob({
       serverJobState.lastPageData = refreshed;
     } catch (_) {}
 
+    const skipSummary = serverJobState.stats.skipped
+      ? ` (${serverJobState.stats.skipped} already APPROVED skipped)`
+      : '';
+
     await persistServerJobState({
       running: false,
       paused: wasPaused,
@@ -387,18 +414,21 @@ export async function startServerScanJob({
         bannerMsg: wasPaused
           ? `Paused on page ${summary.lastPage + 1} (${serverJobState.stats.updated} updated so far)`
           : wasStopped
-          ? `Stopped — ${serverJobState.stats.updated} scan(s) updated to APPROVED`
-          : `Completed — ${serverJobState.stats.updated} scan(s) updated to APPROVED`,
+          ? `Stopped — ${serverJobState.stats.updated} scan(s) updated to APPROVED${skipSummary}`
+          : `Completed — ${serverJobState.stats.updated} scan(s) updated to APPROVED${skipSummary}`,
       },
     });
 
     if (wasPaused) {
       onToast?.(`Job paused — ${serverJobState.stats.updated} scan(s) updated so far`);
     } else if (wasStopped) {
-      onToast?.(`Stopped — ${serverJobState.stats.updated} scan(s) updated to APPROVED`);
+      onToast?.(`Stopped — ${serverJobState.stats.updated} scan(s) updated to APPROVED${skipSummary}`);
     } else {
+      const skipToast = serverJobState.stats.skipped
+        ? `, ${serverJobState.stats.skipped} skipped`
+        : '';
       onToast?.(
-        `Finished — ${serverJobState.stats.updated} scan(s) updated to APPROVED` +
+        `Finished — ${serverJobState.stats.updated} scan(s) updated to APPROVED${skipToast}` +
           (serverJobState.stats.failed ? `, ${serverJobState.stats.failed} failed` : ''),
         serverJobState.stats.failed > 0
       );

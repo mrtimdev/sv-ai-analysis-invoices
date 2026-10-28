@@ -3,6 +3,7 @@ import Select from 'react-select';
 import CreatableSelect from 'react-select/creatable';
 import { getSettings, saveSettings } from '../lib/db.js';
 import { getScanApiConfig, fetchScansPage } from '../lib/scanApi.js';
+import { saveServerViewConfig } from '../lib/jobManager.js';
 import { fetchAIModels } from '../lib/ai.js';
 import { coolSelectStyles } from './coolSelectTheme.js';
 
@@ -154,6 +155,10 @@ export default function SettingsModal({ open, onClose, onSaved }) {
       v1PageSize,
       v1AutoNextPage,
       v1SkipApproved,
+    });
+    saveServerViewConfig({
+      skipApproved: v1SkipApproved,
+      autoNextPage: v1AutoNextPage,
     });
     onSaved();
     onClose();

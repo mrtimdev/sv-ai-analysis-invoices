@@ -622,6 +622,23 @@ export async function analyzeOneServerScan(
 }
 
 /**
+ * Checks if a scan is approved (either by reviewStatus === 'APPROVED' or status === 'APPROVED' or in session status).
+ */
+export function isScanApproved(scan, scanStatuses = {}) {
+  if (!scan) return false;
+  const scanId = scan.id ?? scan.scanId;
+  if (scanId && scanStatuses[scanId]?.stage === 'updated') return true;
+
+  const rev = String(scan.reviewStatus || scan.headers?.reviewStatus || '').trim().toUpperCase();
+  if (rev === 'APPROVED' || rev === 'APPROVE') return true;
+
+  const st = String(scan.status || scan.headers?.status || '').trim().toUpperCase();
+  if (st === 'APPROVED' || st === 'APPROVE') return true;
+
+  return false;
+}
+
+/**
  * Main End-to-End Pipeline:
  * 1. Calls `GET /v1/list/scans` for the current page.
  * 2. Accesses each scan's `imageUrl` and analyzes it with `extractWithAI` (following `PROMPT` in `src/lib/ai.js`).
@@ -658,6 +675,7 @@ export async function analyzeAndSyncScansPages({
   let totalAnalyzed = 0;
   let totalUpdated = 0;
   let totalFailed = 0;
+  let totalSkipped = 0;
   let pagesProcessed = 0;
   const processedScanIds = new Set();
 
@@ -676,12 +694,33 @@ export async function analyzeAndSyncScansPages({
       break;
     }
 
+    const skippedOnPage = pageData.content.filter((scan) => {
+      if (filterSet && !filterSet.has(String(scan.id))) return false;
+      return effectiveSkipApproved && isScanApproved(scan);
+    });
+
     const candidates = pageData.content.filter((scan) => {
       if (filterSet && !filterSet.has(String(scan.id))) return false;
-      if (effectiveSkipApproved && String(scan.reviewStatus || '').toUpperCase() === 'APPROVED') return false;
+      if (effectiveSkipApproved && isScanApproved(scan)) return false;
       if (processedScanIds.has(String(scan.id))) return false;
       return true;
     });
+
+    // Notify telemetry about skipped already-APPROVED scans
+    if (skippedOnPage.length > 0) {
+      totalSkipped += skippedOnPage.length;
+      skippedOnPage.forEach((s) => {
+        processedScanIds.add(String(s.id));
+        onScanProgress({
+          scanId: s.id,
+          scan: s,
+          page: currentPage,
+          stage: 'skipped',
+          count: 1,
+          message: 'Skipped (Already APPROVED)',
+        });
+      });
+    }
 
     const pagePayloads = [];
     let pageSuccessCount = 0;
@@ -794,6 +833,7 @@ export async function analyzeAndSyncScansPages({
       totalAnalyzed,
       totalUpdated,
       totalFailed,
+      totalSkipped: skippedOnPage.length,
       batchResponse,
     });
 
@@ -823,6 +863,7 @@ export async function analyzeAndSyncScansPages({
     totalAnalyzed,
     totalUpdated,
     totalFailed,
+    totalSkipped,
   };
 }
 
