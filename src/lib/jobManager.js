@@ -198,7 +198,8 @@ export async function startServerScanJob({
   if (serverJobState.running) return;
 
   const s = getSettings();
-  if (!s.key || !s.base) {
+  if (!s.base?.trim()) {
+    onToast?.('Please configure your AI API Base URL in Settings to analyze scans.', true);
     onNeedSettings?.();
     return;
   }
@@ -445,6 +446,7 @@ export async function startServerScanJob({
       },
     });
     if (err.message === 'NO_SETTINGS') {
+      onToast?.('Please configure your AI API Base URL in Settings to continue.', true);
       onNeedSettings?.();
     } else {
       onToast?.('Batch sync error: ' + err.message, true);
@@ -539,7 +541,8 @@ export async function startLocalQueueJob({
 } = {}) {
   if (localQueueState.running) return;
   const s = getSettings();
-  if (!s.key || !s.base) {
+  if (!s.base?.trim()) {
+    onToast?.('Please configure your AI API Base URL in Settings to run the queue.', true);
     onNeedSettings?.();
     return;
   }
@@ -630,6 +633,7 @@ export async function startLocalQueueJob({
             q.ms = null;
             await put('queue', q);
             onQueueUpdated?.(q);
+            onToast?.('Please configure your AI API Base URL in Settings to continue.', true);
             onNeedSettings?.();
             break;
           }

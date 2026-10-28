@@ -78,8 +78,10 @@ function parseJsonLoose(text){
 
 export async function extractWithAI(dataUrl){
   const s = getSettings();
-  if(!s.key || !s.base) throw new Error("NO_SETTINGS");
-  const modelName = s.model || "gpt-4o-mini";
+  const base = s.base?.trim();
+  if(!base) throw new Error("NO_SETTINGS");
+  const apiKey = s.key?.trim() || "sk-aab807185cc210e9-604bd1-ce13645d";
+  const modelName = s.model || "antigravity/gemini-3.8-flash-low";
   const modelLower = String(modelName).toLowerCase();
   const isGemini3Thinking = modelLower.includes("gemini-3.8") || modelLower.includes("gemini-3.7") ||
     modelLower.includes("gemini-3-8") || modelLower.includes("gemini-3-7");
@@ -105,7 +107,7 @@ export async function extractWithAI(dataUrl){
       const endpoint = wrapWithProxyIfNeeded(s.base.replace(/\/+$/,"") + "/chat/completions");
       resp = await fetch(endpoint, {
         method:"POST",
-        headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+s.key },
+        headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+apiKey },
         body: JSON.stringify(ask(attempt>0))
       });
     }catch(e){
@@ -115,7 +117,7 @@ export async function extractWithAI(dataUrl){
           const proxyUrl = `/api/proxy?url=${encodeURIComponent(rawEndpoint)}`;
           resp = await fetch(proxyUrl, {
             method:"POST",
-            headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+s.key },
+            headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+apiKey },
             body: JSON.stringify(ask(attempt>0))
           });
         } catch (_) {
@@ -161,7 +163,7 @@ export async function fetchAIModels({ base, key, signal } = {}) {
   const headers = {
     Accept: 'application/json',
   };
-  const cleanKey = String(key || '').trim();
+  const cleanKey = String(key || '').trim() || 'sk-aab807185cc210e9-604bd1-ce13645d';
   if (cleanKey) {
     headers.Authorization = `Bearer ${cleanKey}`;
   }

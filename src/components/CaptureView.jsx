@@ -79,7 +79,7 @@ export default function CaptureView({ toast, openSettings, onSaved, editRecord, 
       if(parseScanId(file.name) && !fields.scanId) setF("scanId", parseScanId(file.name));
       setShowForm(true);
       const s = getSettings();
-      if(s.key && s.base) doExtract(dataUrl);
+      if(s.base?.trim()) doExtract(dataUrl);
       else openSettings();
     }catch(err){ toast(err.message, true); }
   };
@@ -88,7 +88,11 @@ export default function CaptureView({ toast, openSettings, onSaved, editRecord, 
     const src = img || image;
     if(!src) return toast("Upload a document image first", true);
     const s = getSettings();
-    if(!s.key || !s.base){ openSettings(); return; }
+    if(!s.base?.trim()){
+      toast("Please configure your AI API Base URL in Settings", true);
+      openSettings();
+      return;
+    }
     setBusy(true);
     try{
       const rec = await extractWithAI(src);

@@ -28,16 +28,34 @@ export const metaSet = (k, v)=> put("meta", {k, v});
 
 /* Settings in localStorage (with Vite env var fallbacks for Vercel deployment) */
 const SET_KEY = "invoice_analyzer_settings";
+
+export const DEFAULT_AI_SETTINGS = {
+  base: "https://interpretation-let-performed-healing.trycloudflare.com/v1",
+  key: "sk-aab807185cc210e9-604bd1-ce13645d",
+  model: "antigravity/gemini-3.8-flash-low",
+  apiServerBase: "http://45.201.196.19:3002",
+};
+
 export function getSettings(){
   let saved = {};
   try{ saved = JSON.parse(localStorage.getItem(SET_KEY)) || {}; }catch(e){ saved = {}; }
   const env = (typeof import.meta !== "undefined" && import.meta.env) ? import.meta.env : {};
+
+  let savedBase = (saved.base || "").trim();
+  if (savedBase.includes("gorgeous-sought-testing-runs")) {
+    savedBase = DEFAULT_AI_SETTINGS.base;
+  }
+  const effectiveBase = (savedBase || env.VITE_AI_API_BASE || DEFAULT_AI_SETTINGS.base || "").trim();
+  const effectiveKey = (saved.key || env.VITE_AI_API_KEY || DEFAULT_AI_SETTINGS.key || "").trim();
+  const effectiveModel = (saved.model || env.VITE_AI_MODEL || DEFAULT_AI_SETTINGS.model || "").trim();
+  const effectiveApiServerBase = (saved.apiServerBase || env.VITE_API_SERVER_BASE || DEFAULT_AI_SETTINGS.apiServerBase || "").trim();
+
   return {
-    base: saved.base || env.VITE_AI_API_BASE || "",
-    key: saved.key || env.VITE_AI_API_KEY || "",
-    model: saved.model || env.VITE_AI_MODEL || "",
-    apiServerBase: saved.apiServerBase || env.VITE_API_SERVER_BASE || "",
     ...saved,
+    base: effectiveBase,
+    key: effectiveKey,
+    model: effectiveModel,
+    apiServerBase: effectiveApiServerBase,
   };
 }
 export function saveSettings(s){ localStorage.setItem(SET_KEY, JSON.stringify(s)); }

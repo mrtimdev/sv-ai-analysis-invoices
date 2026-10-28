@@ -216,7 +216,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                     type="button"
                     className="btn xs"
                     style={{ fontSize: 11, padding: '2px 7px' }}
-                    onClick={() => setBase('https://gorgeous-sought-testing-runs.trycloudflare.com/v1')}
+                    onClick={() => setBase('https://interpretation-let-performed-healing.trycloudflare.com/v1')}
                     title="Active Cloudflare Tunnel for local OmniRoute"
                   >
                     Cloudflare Tunnel
@@ -277,9 +277,9 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                       type="button"
                       className="btn xs"
                       style={{ fontSize: 11, padding: '3px 9px', fontWeight: 600 }}
-                      onClick={() => setBase('https://gorgeous-sought-testing-runs.trycloudflare.com/v1')}
+                      onClick={() => setBase('https://interpretation-let-performed-healing.trycloudflare.com/v1')}
                     >
-                      Use Active Cloudflare Tunnel (https://gorgeous-sought-testing-runs.trycloudflare.com/v1)
+                      Use Active Cloudflare Tunnel (https://interpretation-let-performed-healing.trycloudflare.com/v1)
                     </button>
                   </div>
                 )}
@@ -300,12 +300,15 @@ export default function SettingsModal({ open, onClose, onSaved }) {
               )}
             </label>
             <label className="f">
-              AI API Key
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                <span>AI API Key</span>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>(Optional for OmniRoute / Ollama)</span>
+              </div>
               <input
                 type="password"
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
-                placeholder="sk-…"
+                placeholder="sk-… (Leave blank for default OmniRoute key)"
               />
             </label>
             <label className="f">

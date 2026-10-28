@@ -313,7 +313,8 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
   const runSingleRowAnalyze = async (scan, e) => {
     if (e) e.stopPropagation();
     const s = getSettings();
-    if (!s.key || !s.base) {
+    if (!s.base?.trim()) {
+      toast('Please configure your AI API Base URL in Settings to analyze scans.', true);
       openSettings();
       return;
     }
@@ -551,7 +552,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
 
   const cfg = getScanApiConfig();
   const s = getSettings();
-  const aiReady = !!(s.key && s.base);
+  const aiReady = !!s.base?.trim();
   const allOnPageSelected =
     pageData.content.length > 0 && pageData.content.every((r) => selectedIds.has(r.id));
   const approvedOnPage = pageData.content.filter(
