@@ -108,7 +108,23 @@ export async function extractWithAI(dataUrl){
         headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+s.key },
         body: JSON.stringify(ask(attempt>0))
       });
-    }catch(e){ throw new Error("Network error: "+e.message); }
+    }catch(e){
+      const rawEndpoint = s.base.replace(/\/+$/,"") + "/chat/completions";
+      if (typeof window !== 'undefined' && !rawEndpoint.includes('/api/proxy') && !/:\/\/(localhost|127\.0\.0\.1)/i.test(rawEndpoint)) {
+        try {
+          const proxyUrl = `/api/proxy?url=${encodeURIComponent(rawEndpoint)}`;
+          resp = await fetch(proxyUrl, {
+            method:"POST",
+            headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+s.key },
+            body: JSON.stringify(ask(attempt>0))
+          });
+        } catch (_) {
+          throw new Error("Network error: "+e.message);
+        }
+      } else {
+        throw new Error("Network error: "+e.message);
+      }
+    }
     if(!resp.ok){
       const txt = await resp.text().catch(()=> "");
       if(attempt===0 && resp.status===400 && txt.includes("response_format")) continue;
@@ -159,7 +175,27 @@ export async function fetchAIModels({ base, key, signal } = {}) {
       signal,
     });
   } catch (err) {
-    throw new Error(`Network error connecting to ${modelsUrl}: ${err.message}. If calling an external provider from browser, ensure CORS is allowed.`);
+    if (typeof window !== 'undefined' && !modelsUrl.includes('/api/proxy') && !/:\/\/(localhost|127\.0\.0\.1)/i.test(modelsUrl)) {
+      try {
+        const proxyUrl = `/api/proxy?url=${encodeURIComponent(modelsUrl)}`;
+        resp = await fetch(proxyUrl, {
+          method: 'GET',
+          headers,
+          signal,
+        });
+      } catch (proxyErr) {
+        throw new Error(`Network error connecting to ${modelsUrl}: ${err.message}. If using a Cloudflare tunnel or remote server, verify the tunnel URL is currently active.`);
+      }
+    } else if (/:\/\/(localhost|127\.0\.0\.1)/i.test(modelsUrl) && typeof window !== 'undefined' && window.location.protocol === 'https:') {
+      throw new Error(
+        `Local network access blocked by browser for "${modelsUrl}". ` +
+        `Chrome blocks public HTTPS websites from accessing localhost directly. ` +
+        `To resolve: 1) Use an HTTPS tunnel (e.g. Cloudflare Tunnel / ngrok) pointing to your local AI, OR ` +
+        `2) In Chrome Site Settings for sv-ai-analysis-invoices.vercel.app, set both 'Local network access' and 'Insecure content' to 'Allow'.`
+      );
+    } else {
+      throw new Error(`Network error connecting to ${modelsUrl}: ${err.message}. If calling an external provider from browser, ensure CORS is allowed.`);
+    }
   }
 
   if (!resp.ok) {

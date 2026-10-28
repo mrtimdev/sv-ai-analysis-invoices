@@ -204,12 +204,95 @@ export default function SettingsModal({ open, onClose, onSaved }) {
 
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
             <label className="f" style={{ gridColumn: '1 / -1' }}>
-              AI API Base URL
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                <span>AI API Base URL</span>
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn xs"
+                    style={{ fontSize: 11, padding: '2px 7px' }}
+                    onClick={() => setBase('https://gorgeous-sought-testing-runs.trycloudflare.com/v1')}
+                    title="Active Cloudflare Tunnel for local OmniRoute"
+                  >
+                    Cloudflare Tunnel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn xs"
+                    style={{ fontSize: 11, padding: '2px 7px' }}
+                    onClick={() => setBase('http://127.0.0.1:20128/v1')}
+                    title="Direct local OmniRoute"
+                  >
+                    Local 127.0.0.1:20128
+                  </button>
+                  <button
+                    type="button"
+                    className="btn xs"
+                    style={{ fontSize: 11, padding: '2px 7px' }}
+                    onClick={() => setBase('http://localhost:11434/v1')}
+                    title="Direct local Ollama"
+                  >
+                    Local Ollama (11434)
+                  </button>
+                </div>
+              </div>
               <input
                 value={base}
                 onChange={(e) => setBase(e.target.value)}
-                placeholder="http://127.0.0.1:20128/v1 or https://api.openai.com/v1"
+                placeholder="https://...trycloudflare.com/v1 or http://127.0.0.1:20128/v1"
               />
+              {/* Dynamic Local Network Access Notice */}
+              {typeof window !== 'undefined' &&
+                /\.vercel\.app$/i.test(window.location.hostname) &&
+                /:\/\/(localhost|127\.0\.0\.1)/i.test(base) && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      padding: '8px 11px',
+                      background: '#fffbeb',
+                      border: '1px solid #fde68a',
+                      borderRadius: 8,
+                      fontSize: 11.5,
+                      color: '#92400e',
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, marginBottom: 3 }}>
+                      🔒 Local Network Access Notice:
+                    </div>
+                    <div>
+                      Connecting from a cloud app (<code>vercel.app</code>) to local AI on your computer requires Chrome site permissions:
+                    </div>
+                    <ul style={{ margin: '4px 0 6px 18px', padding: 0, lineHeight: 1.5 }}>
+                      <li>Click the <b>Tune/Settings icon</b> on the left of the URL bar &rarr; <b>Site settings</b></li>
+                      <li>Set <b>Local network access</b> to <b>Allow</b></li>
+                      <li>Set <b>Insecure content</b> to <b>Allow</b></li>
+                      <li><i>Or recommended:</i> Click button below to use Cloudflare Tunnel (no browser permissions required!).</li>
+                    </ul>
+                    <button
+                      type="button"
+                      className="btn xs"
+                      style={{ fontSize: 11, padding: '3px 9px', fontWeight: 600 }}
+                      onClick={() => setBase('https://gorgeous-sought-testing-runs.trycloudflare.com/v1')}
+                    >
+                      Use Active Cloudflare Tunnel (https://gorgeous-sought-testing-runs.trycloudflare.com/v1)
+                    </button>
+                  </div>
+                )}
+              {typeof window !== 'undefined' && /trycloudflare\.com/i.test(base) && (
+                <div
+                  style={{
+                    marginTop: 6,
+                    padding: '5px 9px',
+                    background: '#ecfdf5',
+                    border: '1px solid #a7f3d0',
+                    borderRadius: 8,
+                    fontSize: 11.5,
+                    color: '#065f46',
+                  }}
+                >
+                  ☁️ <strong>Cloudflare HTTPS Tunnel:</strong> Encrypted HTTPS connection to local AI — completely bypasses browser mixed-content and local network restrictions.
+                </div>
+              )}
             </label>
             <label className="f">
               AI API Key
