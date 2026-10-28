@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import Select from 'react-select';
 import { put, getSettings } from '../lib/db.js';
 import { extractWithAI } from '../lib/ai.js';
-import { updateSingleScanV1 } from '../lib/scanApi.js';
+import { updateSingleScanV1, resolveScanImageUrl } from '../lib/scanApi.js';
 import { compressImage, parseScanId, uid, num } from '../lib/util.js';
 import { Ic } from './icons.jsx';
 import { coolSelectStyles } from './coolSelectTheme.js';
@@ -179,7 +179,7 @@ export default function CaptureView({ toast, openSettings, onSaved, editRecord, 
         </div>
         {image && (
           <div className="imgwrap" style={{marginTop:14,maxWidth:420}}>
-            <img src={image} alt="document preview" />
+            <img src={resolveScanImageUrl(image) || image} alt="document preview" />
           </div>
         )}
       </div>

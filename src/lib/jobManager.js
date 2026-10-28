@@ -11,6 +11,7 @@ import {
   getScanApiConfig,
   analyzeAndSyncScansPages,
   fetchScansPage,
+  resolveScanImageUrl,
 } from './scanApi.js';
 import { extractWithAI } from './ai.js';
 import { blobToDataUrl, uid } from './util.js';
@@ -282,7 +283,7 @@ export async function startServerScanJob({
           };
           serverJobState.activeScan = {
             id: evt.scanId,
-            imageUrl: evt.scan?.imageUrl || null,
+            imageUrl: evt.scan ? resolveScanImageUrl(evt.scan) : null,
             invoiceNo: evt.invoiceNo || evt.scan?.invoiceNo || null,
             dealerCode: evt.scan?.dealerCode || null,
             vehicleCode: evt.scan?.vehicleCode || null,
@@ -311,6 +312,7 @@ export async function startServerScanJob({
                 ? {
                     ...row,
                     ...evt.scan,
+                    imageUrl: resolveScanImageUrl(evt.scan || row),
                     invoiceNo: evt.invoiceNo || evt.scan.invoiceNo || row.invoiceNo,
                     reviewStatus: evt.stage === 'updated' ? 'APPROVED' : row.reviewStatus,
                     status: evt.stage === 'updated' ? 'COMPLETED' : row.status,

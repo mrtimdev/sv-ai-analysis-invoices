@@ -9,6 +9,7 @@ import {
   batchUpdateScansV1,
   exportServerScansExcelV1,
   cancelServerScansExportJobV1,
+  resolveScanImageUrl,
 } from '../lib/scanApi.js';
 import {
   getJobManagerSnapshot,
@@ -296,7 +297,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
     route: detail.route || detail.headers?.route,
     originalFile: detail.originalFilename,
     verificationNotes: detail.headers?.verificationNotes,
-    image: detail.imageUrl,
+    image: resolveScanImageUrl(detail),
     items: Array.isArray(detail.items) ? detail.items : [],
     reviewStatus: detail.reviewStatus,
   });
@@ -336,6 +337,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
       const updatedRow = {
         ...scan,
         ...(result.updatedScan || result.payload),
+        imageUrl: resolveScanImageUrl(result.updatedScan || scan),
         reviewStatus: 'APPROVED',
         status: 'COMPLETED',
       };
@@ -545,10 +547,10 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
         <div className="v1-spotlight">
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <div className="v1-spot-thumb">
-              {activeScan?.imageUrl ? (
-                <img src={activeScan.imageUrl} alt={`Scan ${activeScan.id}`} />
-              ) : pageData.content[0]?.imageUrl ? (
-                <img src={pageData.content[0].imageUrl} alt="Current page scan" />
+              {activeScan ? (
+                <img src={resolveScanImageUrl(activeScan)} alt={`Scan ${activeScan.id}`} />
+              ) : pageData.content[0] ? (
+                <img src={resolveScanImageUrl(pageData.content[0])} alt="Current page scan" />
               ) : null}
               {running && <div className="v1-laser" />}
             </div>
@@ -1356,7 +1358,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                               }}
                             >
                               <img
-                                src={scan.imageUrl}
+                                src={resolveScanImageUrl(scan)}
                                 alt={`Scan ${scan.id}`}
                                 loading="lazy"
                                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
@@ -1459,7 +1461,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                   >
                     <div className="v1-card-media">
                       {scan.imageUrl ? (
-                        <img src={scan.imageUrl} alt={`Scan ${scan.id}`} loading="lazy" />
+                        <img src={resolveScanImageUrl(scan)} alt={`Scan ${scan.id}`} loading="lazy" />
                       ) : (
                         <span style={{ color: '#64748b', fontSize: 12 }}>No image</span>
                       )}
@@ -1619,7 +1621,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
               {inspectedScan.imageUrl && (
                 <div className="imgwrap" style={{ marginBottom: 12, maxHeight: 240, overflow: 'hidden' }}>
                   <img
-                    src={inspectedScan.imageUrl}
+                    src={resolveScanImageUrl(inspectedScan)}
                     alt={`Scan ${inspectedScan.id}`}
                     style={{ objectFit: 'contain', maxHeight: 240, background: '#0f172a' }}
                   />

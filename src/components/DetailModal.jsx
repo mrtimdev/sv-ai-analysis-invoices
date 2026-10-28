@@ -1,4 +1,5 @@
 import React from 'react';
+import { resolveScanImageUrl } from '../lib/scanApi.js';
 
 export default function DetailModal({ record, onClose, onDelete, onEdit }){
   if(!record) return null;
@@ -21,7 +22,7 @@ export default function DetailModal({ record, onClose, onDelete, onEdit }){
         <div className="mbody">
           {r.image && (
             <div className="imgwrap" style={{maxWidth:640, marginBottom:18}}>
-              <img src={r.image} alt="document" />
+              <img src={resolveScanImageUrl(r.image) || r.image} alt="document" />
             </div>
           )}
           <div className="kv">

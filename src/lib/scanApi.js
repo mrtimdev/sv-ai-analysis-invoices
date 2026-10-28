@@ -249,7 +249,9 @@ export async function fetchScansPage({
  */
 export function resolveScanImageUrl(scan, configOverrides = {}) {
   let rawUrl = '';
-  if (scan && scan.imageUrl) {
+  if (typeof scan === 'string') {
+    rawUrl = resolveScanApiUrl(scan, configOverrides);
+  } else if (scan && scan.imageUrl) {
     rawUrl = resolveScanApiUrl(scan.imageUrl, configOverrides);
   } else if (scan && scan.id != null) {
     rawUrl = resolveScanApiUrl(`/v1/${encodeURIComponent(scan.id)}/scan/image`, configOverrides);
@@ -419,7 +421,11 @@ export async function updateSingleScanV1(scanId, extractedOrPayload, { configOve
     throw new Error(`POST scan #${scanId} failed (${resp.status}): ${text.slice(0, 200)}`);
   }
 
-  return await resp.json();
+  const data = await resp.json().catch(() => ({ ok: true }));
+  return {
+    ...data,
+    imageUrl: resolveScanImageUrl(data, configOverrides),
+  };
 }
 
 /**
@@ -463,7 +469,21 @@ export async function batchUpdateScansV1(scanPayloads, { configOverrides = {}, s
     throw new Error(`POST ${cfg.v1ListScansPath} failed (${resp.status}): ${text.slice(0, 200)}`);
   }
 
-  return await resp.json();
+  const data = await resp.json().catch(() => ({ ok: true }));
+  const rawList = Array.isArray(data.content)
+    ? data.content
+    : Array.isArray(data.scans)
+    ? data.scans
+    : [];
+  const normalized = rawList.map((s) => ({
+    ...s,
+    imageUrl: resolveScanImageUrl(s, configOverrides),
+  }));
+  return {
+    ...data,
+    content: normalized,
+    scans: normalized,
+  };
 }
 
 /**
