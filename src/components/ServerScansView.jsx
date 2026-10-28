@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { getSettings } from '../lib/db.js';
 import {
   getScanApiConfig,
@@ -7,6 +7,7 @@ import {
   analyzeOneServerScan,
   batchUpdateScansV1,
   exportServerScansExcelV1,
+  cancelServerScansExportJobV1,
 } from '../lib/scanApi.js';
 import {
   getJobManagerSnapshot,
@@ -86,6 +87,9 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
   const [pageError, setPageError] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [exportingExcel, setExportingExcel] = useState(false);
+  const [exportProgress, setExportProgress] = useState(null);
+  const exportAbortRef = useRef(null);
+  const exportJobIdRef = useRef(null);
 
   // Subscribe to the persistent background job manager so state stays live across tab switches & page refreshes
   const [jobSnap, setJobSnap] = useState(initialSnap);
@@ -376,6 +380,30 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
     }
   };
 
+  const handleCancelExportExcel = async () => {
+    const jobId = exportJobIdRef.current;
+    if (exportAbortRef.current) {
+      exportAbortRef.current.abort();
+      exportAbortRef.current = null;
+    }
+    if (jobId) {
+      await cancelServerScansExportJobV1(jobId);
+      exportJobIdRef.current = null;
+    }
+    setExportingExcel(false);
+    setExportProgress((prev) =>
+      prev
+        ? {
+            ...prev,
+            state: 'CANCELLED',
+            stage: 'CANCELLED',
+            message: 'Excel export cancelled by user.',
+          }
+        : null
+    );
+    toast('Excel export cancelled');
+  };
+
   const handleExportExcel = async ({ selectedOnly = false } = {}) => {
     if (exportingExcel) return;
     const ids = selectedOnly ? [...selectedIds] : null;
@@ -383,25 +411,71 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
       toast('Select at least one scan first to export selected rows', true);
       return;
     }
+    const expectedTotal = selectedOnly ? ids.length : pageData.totalElements || 0;
+    const exportLimit = Math.max(100000, expectedTotal + 1000);
+    const abortCtrl = new AbortController();
+    exportAbortRef.current = abortCtrl;
+    exportJobIdRef.current = null;
     setExportingExcel(true);
+    setExportProgress({
+      mode: selectedOnly ? 'selected' : 'filtered',
+      percent: 1,
+      state: 'RUNNING',
+      stage: 'STARTING',
+      processedScans: 0,
+      totalScans: expectedTotal,
+      totalItemRows: 0,
+      fileSizeBytes: 0,
+      elapsedMs: 0,
+      message: selectedOnly
+        ? `Preparing ${ids.length.toLocaleString()} selected scan(s) for Combined Items Excel…`
+        : `Preparing ${expectedTotal.toLocaleString()} filtered scan(s) for Combined Items Excel…`,
+    });
     try {
       const res = await exportServerScansExcelV1({
         ids,
         filters,
         sort,
+        limit: exportLimit,
         filename: selectedOnly
           ? `combined-invoice-items-selected-${ids.length}.xlsx`
           : 'combined-invoice-items.xlsx',
+        signal: abortCtrl.signal,
+        onJobStarted: (jobId) => {
+          exportJobIdRef.current = jobId;
+        },
+        onProgress: (prog) => {
+          setExportProgress((prev) => ({
+            ...(prev || {}),
+            ...prog,
+            totalScans: prog.totalScans || expectedTotal,
+          }));
+        },
       });
+      const finalScans = res.totalScans || expectedTotal;
       toast(
         selectedOnly
-          ? `Exported ${ids.length} selected scan(s) to ${res.filename} ✓`
-          : `Exported filtered scans (${pageData.totalElements.toLocaleString()}) to ${res.filename} ✓`
+          ? `Exported ${finalScans.toLocaleString()} selected scan(s) to ${res.filename} ✓`
+          : `Exported ${finalScans.toLocaleString()} filtered scan(s) to ${res.filename} ✓`
       );
     } catch (err) {
-      toast('Excel export failed: ' + err.message, true);
+      if (!/cancelled/i.test(err.message || '')) {
+        setExportProgress((prev) =>
+          prev
+            ? {
+                ...prev,
+                state: 'FAILED',
+                stage: 'FAILED',
+                message: err.message || 'Excel export failed.',
+              }
+            : null
+        );
+        toast('Excel export failed: ' + err.message, true);
+      }
     } finally {
       setExportingExcel(false);
+      exportAbortRef.current = null;
+      exportJobIdRef.current = null;
     }
   };
 
@@ -928,6 +1002,136 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
             <div className="pct">{pagePct}%</div>
           </div>
 
+          {/* Cool Real-Time Excel Export Telemetry Card HUD */}
+          {exportProgress && (
+            <div className={`v1-export-hud ${exportProgress.state ? exportProgress.state.toLowerCase() : 'running'}`}>
+              <div className="v1-export-hud-left">
+                <div className="v1-export-ring-box">
+                  <svg className="v1-export-ring" viewBox="0 0 48 48">
+                    <circle className="v1-export-ring-bg" cx="24" cy="24" r="20" />
+                    <circle
+                      className="v1-export-ring-fill"
+                      cx="24"
+                      cy="24"
+                      r="20"
+                      strokeDasharray="125.66"
+                      strokeDashoffset={125.66 - (125.66 * Math.min(100, Math.max(0, exportProgress.percent || 0))) / 100}
+                    />
+                  </svg>
+                  <span className="v1-export-ring-text">{exportProgress.percent || 0}%</span>
+                </div>
+                <div className="v1-export-hud-meta">
+                  <div className="v1-export-hud-title">
+                    <span className={exportProgress.state === 'COMPLETED' ? 'live-dot' : exportProgress.state === 'FAILED' || exportProgress.state === 'CANCELLED' ? 'warn-dot' : 'live-dot pulse'} />
+                    <b>
+                      {exportProgress.state === 'COMPLETED'
+                        ? 'Excel Export Ready'
+                        : exportProgress.state === 'CANCELLED'
+                        ? 'Export Cancelled'
+                        : exportProgress.state === 'FAILED'
+                        ? 'Export Failed'
+                        : 'Exporting Combined Items Excel…'}
+                    </b>
+                    <span className="v1-export-badge">
+                      {exportProgress.mode === 'selected' ? 'Selected Scans' : 'Filtered Scans (10,000+ support)'}
+                    </span>
+                  </div>
+                  <div className="v1-export-hud-msg">{exportProgress.message}</div>
+                  <div className="v1-export-hud-steps">
+                    <span
+                      className={
+                        'v1-export-step' +
+                        (['STARTING', 'QUERYING_SCANS'].includes(exportProgress.stage)
+                          ? ' active'
+                          : (exportProgress.percent || 0) > 20
+                          ? ' done'
+                          : '')
+                      }
+                    >
+                      1. Query DB
+                    </span>
+                    <span
+                      className={
+                        'v1-export-step' +
+                        (['LOADING_ITEMS', 'PARSING_DETAILS'].includes(exportProgress.stage)
+                          ? ' active'
+                          : (exportProgress.percent || 0) > 50
+                          ? ' done'
+                          : '')
+                      }
+                    >
+                      2. Line Items
+                    </span>
+                    <span
+                      className={
+                        'v1-export-step' +
+                        (['WRITING_ROWS', 'FINALIZING_WORKBOOK'].includes(exportProgress.stage)
+                          ? ' active'
+                          : (exportProgress.percent || 0) > 90
+                          ? ' done'
+                          : '')
+                      }
+                    >
+                      3. Format .xlsx
+                    </span>
+                    <span
+                      className={
+                        'v1-export-step' +
+                        (exportProgress.stage === 'DOWNLOADING'
+                          ? ' active'
+                          : exportProgress.state === 'COMPLETED'
+                          ? ' done'
+                          : '')
+                      }
+                    >
+                      4. Download
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="v1-export-hud-right">
+                <div className="v1-export-stat-chips">
+                  <div className="v1-export-chip">
+                    <span className="k">Scans:</span>
+                    <span className="v">
+                      {exportProgress.processedScans ? exportProgress.processedScans.toLocaleString() : (exportProgress.totalScans || 0).toLocaleString()}{' '}
+                      / {(exportProgress.totalScans || 0).toLocaleString()}
+                    </span>
+                  </div>
+                  {exportProgress.totalItemRows > 0 && (
+                    <div className="v1-export-chip">
+                      <span className="k">Items:</span>
+                      <span className="v">{exportProgress.totalItemRows.toLocaleString()}</span>
+                    </div>
+                  )}
+                  {exportProgress.elapsedMs > 0 && (
+                    <div className="v1-export-chip">
+                      <span className="k">Time:</span>
+                      <span className="v">{(exportProgress.elapsedMs / 1000).toFixed(1)}s</span>
+                    </div>
+                  )}
+                  {exportProgress.fileSizeBytes > 0 && (
+                    <div className="v1-export-chip">
+                      <span className="k">Size:</span>
+                      <span className="v">{(exportProgress.fileSizeBytes / (1024 * 1024)).toFixed(2)} MB</span>
+                    </div>
+                  )}
+                </div>
+                <div className="v1-export-hud-actions">
+                  {exportingExcel ? (
+                    <button type="button" className="btn danger sm" onClick={handleCancelExportExcel}>
+                      <Ic.stop className="ic" /> Cancel
+                    </button>
+                  ) : (
+                    <button type="button" className="btn sm" onClick={() => setExportProgress(null)}>
+                      Dismiss
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Action Control Bar */}
           <div className="row" style={{ marginBottom: 14 }}>
             {!running ? (
@@ -988,8 +1192,8 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                 disabled={exportingExcel}
               >
                 <Ic.export className="ic" />{' '}
-                {exportingExcel
-                  ? 'Exporting Excel…'
+                {exportingExcel && exportProgress?.mode === 'selected'
+                  ? `Exporting Selected (${exportProgress.percent || 0}%)…`
                   : `Export Selected Excel (${selectedIds.size})`}
               </button>
             ) : null}
@@ -999,11 +1203,11 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
               className="btn"
               onClick={() => handleExportExcel({ selectedOnly: false })}
               disabled={exportingExcel || pageData.totalElements === 0}
-              title="Export all scans matching current filters using Combined Items Excel format"
+              title="Export all scans matching current filters using Combined Items Excel format (supports 10,000+ scans)"
             >
               <Ic.export className="ic" />{' '}
-              {exportingExcel
-                ? 'Exporting…'
+              {exportingExcel && exportProgress?.mode !== 'selected'
+                ? `Exporting (${exportProgress?.percent || 0}%)…`
                 : `Export Filtered Excel (${pageData.totalElements.toLocaleString()})`}
             </button>
 
