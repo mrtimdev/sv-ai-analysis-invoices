@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Select from 'react-select';
-import { getSettings } from '../lib/db.js';
+import { getSettings, saveSettings } from '../lib/db.js';
 import {
   getScanApiConfig,
   fetchScansPage,
@@ -1261,9 +1261,32 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                 background: '#fef2f2',
                 borderColor: '#fecaca',
                 color: '#991b1b',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: 8,
               }}
             >
-              {pageError}
+              <div>
+                <strong>Error loading scans:</strong> {pageError}
+              </div>
+              {/localhost|127\.0\.0\.1|Failed to fetch/i.test(pageError) && (
+                <button
+                  type="button"
+                  className="btn sm"
+                  style={{ background: '#fff', borderColor: '#fca5a5', color: '#991b1b', fontWeight: 600 }}
+                  onClick={async () => {
+                    const s = getSettings();
+                    saveSettings({ ...s, apiServerBase: 'http://45.201.196.19:3002' });
+                    setPageError(null);
+                    await loadPage(0, size, sort, filters);
+                    toast?.('Switched to Production Server (http://45.201.196.19:3002)', 'ok');
+                  }}
+                >
+                  Switch to Production Server (45.201.196.19:3002)
+                </button>
+              )}
             </div>
           )}
 

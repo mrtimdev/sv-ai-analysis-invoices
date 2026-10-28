@@ -1,5 +1,6 @@
 /* KHB extraction protocol + AI call with diagnostics and auto-retry */
 import { getSettings } from './db.js';
+import { wrapWithProxyIfNeeded } from './scanApi.js';
 
 export const PROMPT = `You are a precise data-extraction engine for KHB documents (Khmer Beverages, Cambodia).
 Read the attached document image and return ONLY a JSON object (no markdown, no commentary).
@@ -101,7 +102,8 @@ export async function extractWithAI(dataUrl){
   for(let attempt=0; attempt<2; attempt++){
     let resp;
     try{
-      resp = await fetch(s.base.replace(/\/+$/,"") + "/chat/completions", {
+      const endpoint = wrapWithProxyIfNeeded(s.base.replace(/\/+$/,"") + "/chat/completions");
+      resp = await fetch(endpoint, {
         method:"POST",
         headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+s.key },
         body: JSON.stringify(ask(attempt>0))
@@ -150,7 +152,8 @@ export async function fetchAIModels({ base, key, signal } = {}) {
 
   let resp;
   try {
-    resp = await fetch(modelsUrl, {
+    const targetUrl = wrapWithProxyIfNeeded(modelsUrl);
+    resp = await fetch(targetUrl, {
       method: 'GET',
       headers,
       signal,

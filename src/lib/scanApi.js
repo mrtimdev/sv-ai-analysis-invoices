@@ -6,7 +6,9 @@ import { compressImage, num, uid } from './util.js';
 export const DEFAULT_SCAN_API_SETTINGS = {
   apiServerBase:
     (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_SERVER_BASE) ||
-    'http://localhost:8080',
+    (typeof window !== 'undefined' && window.location && /\.vercel\.app$/i.test(window.location.hostname)
+      ? 'http://45.201.196.19:3002'
+      : 'http://localhost:8080'),
   v1ListScansPath:
     (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_V1_LIST_SCANS_PATH) ||
     '/v1/list/scans',
@@ -20,6 +22,7 @@ export const DEFAULT_SCAN_API_SETTINGS = {
   v1PageSize: '50',
   v1AutoNextPage: true,
   v1SkipApproved: false,
+  useProxy: 'auto', // 'auto' | 'always' | 'never'
 };
 
 /**
@@ -27,17 +30,31 @@ export const DEFAULT_SCAN_API_SETTINGS = {
  */
 export function getScanApiConfig(overrides = {}) {
   const s = getSettings();
+  const isVercelHost =
+    typeof window !== 'undefined' &&
+    window.location &&
+    /\.vercel\.app$/i.test(window.location.hostname);
+
   let defaultOrigin = DEFAULT_SCAN_API_SETTINGS.apiServerBase;
   if (
     typeof window !== 'undefined' &&
     window.location &&
     /^https?:$/i.test(window.location.protocol) &&
-    !/\.vercel\.app$/i.test(window.location.hostname) &&
+    !isVercelHost &&
     !(typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_SERVER_BASE)
   ) {
     defaultOrigin = window.location.origin;
   }
-  const rawBase = (overrides.apiServerBase ?? s.apiServerBase ?? s.scanBase ?? defaultOrigin) || defaultOrigin;
+
+  let rawBase = (overrides.apiServerBase ?? s.apiServerBase ?? s.scanBase ?? defaultOrigin) || defaultOrigin;
+
+  // If running in cloud (e.g. *.vercel.app) and saved base points to localhost, auto-switch to remote server
+  if (isVercelHost && /:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(rawBase)) {
+    if (!overrides.apiServerBase) {
+      rawBase = 'http://45.201.196.19:3002';
+    }
+  }
+
   // Strip trailing /admin/scans or /v1/... if a full page URL was pasted into base
   const cleanBase = String(rawBase)
     .trim()
@@ -53,7 +70,31 @@ export function getScanApiConfig(overrides = {}) {
     v1PageSize: String(overrides.v1PageSize ?? s.v1PageSize ?? DEFAULT_SCAN_API_SETTINGS.v1PageSize),
     v1AutoNextPage: overrides.v1AutoNextPage ?? (s.v1AutoNextPage !== undefined ? !!s.v1AutoNextPage : DEFAULT_SCAN_API_SETTINGS.v1AutoNextPage),
     v1SkipApproved: overrides.v1SkipApproved ?? (s.v1SkipApproved !== undefined ? !!s.v1SkipApproved : DEFAULT_SCAN_API_SETTINGS.v1SkipApproved),
+    useProxy: overrides.useProxy ?? s.useProxy ?? DEFAULT_SCAN_API_SETTINGS.useProxy,
   };
+}
+
+/**
+ * Wraps a target URL with the local /api/proxy endpoint if running on HTTPS
+ * and the target is an HTTP URL (to eliminate browser Mixed Content blocks).
+ */
+export function wrapWithProxyIfNeeded(url, configOverrides = {}) {
+  if (!url || typeof window === 'undefined') return url;
+  const cfg = getScanApiConfig(configOverrides);
+  if (cfg.useProxy === 'never') return url;
+
+  // Don't double wrap
+  if (url.startsWith('/api/proxy') || url.includes('/api/proxy?url=')) return url;
+
+  const isPageHttps = window.location.protocol === 'https:';
+  const isTargetHttp = /^http:\/\//i.test(url);
+  const isAlwaysProxy = cfg.useProxy === 'always';
+
+  // If on HTTPS and target is HTTP (Mixed Content risk), or forced always:
+  if (isAlwaysProxy || (isPageHttps && isTargetHttp)) {
+    return `/api/proxy?url=${encodeURIComponent(url)}`;
+  }
+  return url;
 }
 
 /**
@@ -148,7 +189,8 @@ export async function fetchScansPage({
   if (sort) params.set('sort', sort);
 
   const baseUrl = resolveScanApiUrl(cfg.v1ListScansPath, configOverrides);
-  const url = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}${params.toString()}`;
+  const rawUrl = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}${params.toString()}`;
+  const url = wrapWithProxyIfNeeded(rawUrl, configOverrides);
 
   const resp = await fetch(url, {
     method: 'GET',
@@ -206,13 +248,13 @@ export async function fetchScansPage({
  * Resolves the scan's `imageUrl` field from `/v1/list/scans` (with fallback to `/v1/{scanId}/scan/image`).
  */
 export function resolveScanImageUrl(scan, configOverrides = {}) {
+  let rawUrl = '';
   if (scan && scan.imageUrl) {
-    return resolveScanApiUrl(scan.imageUrl, configOverrides);
+    rawUrl = resolveScanApiUrl(scan.imageUrl, configOverrides);
+  } else if (scan && scan.id != null) {
+    rawUrl = resolveScanApiUrl(`/v1/${encodeURIComponent(scan.id)}/scan/image`, configOverrides);
   }
-  if (scan && scan.id != null) {
-    return resolveScanApiUrl(`/v1/${encodeURIComponent(scan.id)}/scan/image`, configOverrides);
-  }
-  return '';
+  return rawUrl ? wrapWithProxyIfNeeded(rawUrl, configOverrides) : '';
 }
 
 /**
@@ -220,7 +262,8 @@ export function resolveScanImageUrl(scan, configOverrides = {}) {
  */
 export async function fetchScanById(scanId, { configOverrides = {}, signal } = {}) {
   if (scanId == null || scanId === '') throw new Error('scanId is required');
-  const url = buildSingleScanUrl(scanId, configOverrides);
+  const rawUrl = buildSingleScanUrl(scanId, configOverrides);
+  const url = wrapWithProxyIfNeeded(rawUrl, configOverrides);
   const resp = await fetch(url, {
     method: 'GET',
     headers: { Accept: 'application/json' },
@@ -242,13 +285,15 @@ export async function fetchScanById(scanId, { configOverrides = {}, signal } = {
  * and compresses it to a base64 JPEG dataUrl for `extractWithAI(dataUrl)`.
  */
 export async function fetchScanImageDataUrl(scanOrImageUrl, scanId, { configOverrides = {}, signal } = {}) {
-  const primaryUrl = typeof scanOrImageUrl === 'object' && scanOrImageUrl !== null
+  const primaryRaw = typeof scanOrImageUrl === 'object' && scanOrImageUrl !== null
     ? resolveScanImageUrl(scanOrImageUrl, configOverrides)
     : resolveScanApiUrl(scanOrImageUrl, configOverrides);
+  const primaryUrl = wrapWithProxyIfNeeded(primaryRaw, configOverrides);
   const resolvedId = scanId ?? (typeof scanOrImageUrl === 'object' ? scanOrImageUrl?.id : null);
-  const fallbackUrl = resolvedId != null
+  const fallbackRaw = resolvedId != null
     ? resolveScanApiUrl(`/v1/${encodeURIComponent(resolvedId)}/scan/image`, configOverrides)
     : null;
+  const fallbackUrl = fallbackRaw ? wrapWithProxyIfNeeded(fallbackRaw, configOverrides) : null;
 
   let resp;
   try {
@@ -260,7 +305,7 @@ export async function fetchScanImageDataUrl(scanOrImageUrl, scanId, { configOver
     if (fallbackUrl && fallbackUrl !== primaryUrl) {
       resp = await fetch(fallbackUrl, { signal });
     } else {
-      throw new Error(`Could not fetch scan image (${primaryUrl}): ${err.message}`);
+      throw new Error(`Could not fetch scan image (${primaryRaw}): ${err.message}`);
     }
   }
 
@@ -357,7 +402,8 @@ export async function updateSingleScanV1(scanId, extractedOrPayload, { configOve
     ? { ...extractedOrPayload, id: Number(scanId) || scanId, scanId: Number(scanId) || scanId, reviewStatus: extractedOrPayload.reviewStatus || 'APPROVED' }
     : buildScanUpdatePayload(scanId, extractedOrPayload, 'APPROVED');
 
-  const url = buildSingleScanUrl(scanId, configOverrides);
+  const rawUrl = buildSingleScanUrl(scanId, configOverrides);
+  const url = wrapWithProxyIfNeeded(rawUrl, configOverrides);
   const resp = await fetch(url, {
     method: 'POST',
     headers: {
@@ -397,7 +443,8 @@ export async function batchUpdateScansV1(scanPayloads, { configOverrides = {}, s
     return buildScanUpdatePayload(scanId, entry, entry.reviewStatus || 'APPROVED');
   });
 
-  const url = resolveScanApiUrl(cfg.v1ListScansPath, configOverrides);
+  const rawUrl = resolveScanApiUrl(cfg.v1ListScansPath, configOverrides);
+  const url = wrapWithProxyIfNeeded(rawUrl, configOverrides);
   const resp = await fetch(url, {
     method: 'POST',
     headers: {
@@ -690,7 +737,8 @@ export async function cancelServerScansExportJobV1(jobId, { configOverrides = {}
   if (!jobId) return { ok: false };
   const cfg = getScanApiConfig(configOverrides);
   const basePath = (cfg.v1ExportScansPath || '/v1/list/scans/export').replace(/\/+$/, '');
-  const cancelUrl = resolveScanApiUrl(`${basePath}/cancel/${encodeURIComponent(jobId)}`, configOverrides);
+  const rawCancelUrl = resolveScanApiUrl(`${basePath}/cancel/${encodeURIComponent(jobId)}`, configOverrides);
+  const cancelUrl = wrapWithProxyIfNeeded(rawCancelUrl, configOverrides);
   try {
     const resp = await fetch(cancelUrl, {
       method: 'POST',
@@ -754,8 +802,10 @@ export async function exportServerScansExcelV1({
 } = {}) {
   const cfg = getScanApiConfig(configOverrides);
   const basePath = (cfg.v1ExportScansPath || '/v1/list/scans/export').replace(/\/+$/, '');
-  const directUrl = resolveScanApiUrl(basePath, configOverrides);
-  const startUrl = resolveScanApiUrl(`${basePath}/start`, configOverrides);
+  const directRawUrl = resolveScanApiUrl(basePath, configOverrides);
+  const startRawUrl = resolveScanApiUrl(`${basePath}/start`, configOverrides);
+  const directUrl = wrapWithProxyIfNeeded(directRawUrl, configOverrides);
+  const startUrl = wrapWithProxyIfNeeded(startRawUrl, configOverrides);
 
   const cleanFilters = {};
   Object.entries(filters || {}).forEach(([k, v]) => {
@@ -827,14 +877,16 @@ export async function exportServerScansExcelV1({
       if (jobId) {
         usedAsyncJob = true;
         onJobStarted?.(jobId);
-        const statusUrl = resolveScanApiUrl(
+        const statusRawUrl = resolveScanApiUrl(
           startData.statusUrl || `${basePath}/status/${encodeURIComponent(jobId)}`,
           configOverrides
         );
-        const downloadUrl = resolveScanApiUrl(
+        const statusUrl = wrapWithProxyIfNeeded(statusRawUrl, configOverrides);
+        const downloadRawUrl = resolveScanApiUrl(
           startData.downloadUrl || `${basePath}/download/${encodeURIComponent(jobId)}`,
           configOverrides
         );
+        const downloadUrl = wrapWithProxyIfNeeded(downloadRawUrl, configOverrides);
 
         while (true) {
           if (signal?.aborted) {

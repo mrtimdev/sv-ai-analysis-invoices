@@ -34,7 +34,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
   const [auto, setAuto] = useState(s.autoResume !== undefined ? !!s.autoResume : true);
 
   // Separate /v1 Scan Backend API settings
-  const [apiServerBase, setApiServerBase] = useState(s.apiServerBase || v1Defaults.apiServerBase || 'http://localhost:8080');
+  const [apiServerBase, setApiServerBase] = useState(s.apiServerBase || v1Defaults.apiServerBase || 'http://45.201.196.19:3002');
   const [v1ListScansPath, setV1ListScansPath] = useState(s.v1ListScansPath || '/v1/list/scans');
   const [v1SingleScanPath, setV1SingleScanPath] = useState(s.v1SingleScanPath || '/v1/{scanId}/scan');
   const [v1ExportScansPath, setV1ExportScansPath] = useState(s.v1ExportScansPath || '/v1/list/scans/export');
@@ -68,7 +68,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
       setModel(cur.model || '');
       setScanBase(cur.scanBase || '');
       setAuto(cur.autoResume !== undefined ? !!cur.autoResume : true);
-      setApiServerBase(cur.apiServerBase || cfg.apiServerBase || 'http://localhost:8080');
+      setApiServerBase(cur.apiServerBase || cfg.apiServerBase || 'http://45.201.196.19:3002');
       setV1ListScansPath(cur.v1ListScansPath || '/v1/list/scans');
       setV1SingleScanPath(cur.v1SingleScanPath || '/v1/{scanId}/scan');
       setV1ExportScansPath(cur.v1ExportScansPath || '/v1/list/scans/export');
@@ -146,7 +146,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
       model: model.trim(),
       scanBase: scanBase.trim(),
       autoResume: auto,
-      apiServerBase: apiServerBase.trim() || 'http://localhost:8080',
+      apiServerBase: apiServerBase.trim() || 'http://45.201.196.19:3002',
       v1ListScansPath: v1ListScansPath.trim() || '/v1/list/scans',
       v1SingleScanPath: v1SingleScanPath.trim() || '/v1/{scanId}/scan',
       v1ExportScansPath: v1ExportScansPath.trim() || '/v1/list/scans/export',
@@ -304,12 +304,100 @@ export default function SettingsModal({ open, onClose, onSaved }) {
 
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
             <label className="f" style={{ gridColumn: '1 / -1' }}>
-              Backend Server Base URL
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                <span>Backend Server Base URL</span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    type="button"
+                    className="btn xs"
+                    style={{ fontSize: 11, padding: '2px 7px' }}
+                    onClick={() => setApiServerBase('http://45.201.196.19:3002')}
+                    title="Switch to live production server"
+                  >
+                    45.201.196.19:3002 (Production)
+                  </button>
+                  <button
+                    type="button"
+                    className="btn xs"
+                    style={{ fontSize: 11, padding: '2px 7px' }}
+                    onClick={() => setApiServerBase('http://localhost:8083')}
+                    title="Switch to local dev server (port 8083)"
+                  >
+                    localhost:8083
+                  </button>
+                  <button
+                    type="button"
+                    className="btn xs"
+                    style={{ fontSize: 11, padding: '2px 7px' }}
+                    onClick={() => setApiServerBase('http://localhost:8080')}
+                    title="Switch to local dev server (port 8080)"
+                  >
+                    localhost:8080
+                  </button>
+                </div>
+              </div>
               <input
                 value={apiServerBase}
                 onChange={(e) => setApiServerBase(e.target.value)}
-                placeholder="http://localhost:8080 or http://45.201.196.19:3002"
+                placeholder="http://45.201.196.19:3002 or http://localhost:8083"
               />
+              {/* Dynamic Mixed Content / Cloud Notice */}
+              {typeof window !== 'undefined' &&
+                window.location.protocol === 'https:' &&
+                /^http:\/\//i.test(apiServerBase) &&
+                !/:\/\/(localhost|127\.0\.0\.1)/i.test(apiServerBase) && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      padding: '5px 9px',
+                      background: '#ecfdf5',
+                      border: '1px solid #a7f3d0',
+                      borderRadius: 8,
+                      fontSize: 11.5,
+                      color: '#065f46',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    <span>🛡️</span>
+                    <span>
+                      <strong>HTTPS Mixed-Content Proxy Active:</strong> Since this app runs on HTTPS, requests to{' '}
+                      <code>{apiServerBase}</code> are automatically relayed through the built-in Vercel proxy to bypass browser security blocks.
+                    </span>
+                  </div>
+                )}
+              {typeof window !== 'undefined' &&
+                /\.vercel\.app$/i.test(window.location.hostname) &&
+                /:\/\/(localhost|127\.0\.0\.1)/i.test(apiServerBase) && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      padding: '5px 9px',
+                      background: '#fffbeb',
+                      border: '1px solid #fde68a',
+                      borderRadius: 8,
+                      fontSize: 11.5,
+                      color: '#92400e',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 6,
+                    }}
+                  >
+                    <span>
+                      ⚠️ <strong>Notice:</strong> &quot;localhost&quot; is only reachable on your local machine. In Vercel cloud deployments, switch to Production Server.
+                    </span>
+                    <button
+                      type="button"
+                      className="btn xs"
+                      style={{ whiteSpace: 'nowrap', padding: '2px 8px', fontSize: 11 }}
+                      onClick={() => setApiServerBase('http://45.201.196.19:3002')}
+                    >
+                      Use Production
+                    </button>
+                  </div>
+                )}
             </label>
             <label className="f">
               List &amp; Batch Endpoint (GET / POST)
