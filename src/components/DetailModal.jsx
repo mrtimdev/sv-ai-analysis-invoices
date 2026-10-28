@@ -1,5 +1,5 @@
 import React from 'react';
-import { resolveScanImageUrl } from '../lib/scanApi.js';
+import { resolveScanImageUrl, handleScanImageError } from '../lib/scanApi.js';
 
 export default function DetailModal({ record, onClose, onDelete, onEdit }){
   if(!record) return null;
@@ -12,6 +12,8 @@ export default function DetailModal({ record, onClose, onDelete, onEdit }){
     ["Scan ID", r.scanId], ["Original File", r.originalFile], ["Verification Notes", r.verificationNotes]
   ].filter(p=>p[1]);
 
+  const imageUrl = resolveScanImageUrl(r.image || r.scanId || r) || r.image;
+
   return (
     <div className="mback" onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
       <div className="modal">
@@ -20,9 +22,13 @@ export default function DetailModal({ record, onClose, onDelete, onEdit }){
           <button className="x" onClick={onClose}>&times;</button>
         </div>
         <div className="mbody">
-          {r.image && (
+          {imageUrl && (
             <div className="imgwrap" style={{maxWidth:640, marginBottom:18}}>
-              <img src={resolveScanImageUrl(r.image) || r.image} alt="document" />
+              <img
+                src={imageUrl}
+                alt="document"
+                onError={handleScanImageError}
+              />
             </div>
           )}
           <div className="kv">

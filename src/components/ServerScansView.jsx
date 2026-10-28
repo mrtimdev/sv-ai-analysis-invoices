@@ -10,6 +10,7 @@ import {
   exportServerScansExcelV1,
   cancelServerScansExportJobV1,
   resolveScanImageUrl,
+  handleScanImageError,
 } from '../lib/scanApi.js';
 import {
   getJobManagerSnapshot,
@@ -548,9 +549,17 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <div className="v1-spot-thumb">
               {activeScan ? (
-                <img src={resolveScanImageUrl(activeScan)} alt={`Scan ${activeScan.id}`} />
+                <img
+                  src={resolveScanImageUrl(activeScan)}
+                  alt={`Scan ${activeScan.id}`}
+                  onError={handleScanImageError}
+                />
               ) : pageData.content[0] ? (
-                <img src={resolveScanImageUrl(pageData.content[0])} alt="Current page scan" />
+                <img
+                  src={resolveScanImageUrl(pageData.content[0])}
+                  alt="Current page scan"
+                  onError={handleScanImageError}
+                />
               ) : null}
               {running && <div className="v1-laser" />}
             </div>
@@ -1361,6 +1370,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                                 src={resolveScanImageUrl(scan)}
                                 alt={`Scan ${scan.id}`}
                                 loading="lazy"
+                                onError={handleScanImageError}
                                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                               />
                               {st?.stage === 'analyzing' && <div className="v1-laser" />}
@@ -1461,7 +1471,12 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                   >
                     <div className="v1-card-media">
                       {scan.imageUrl ? (
-                        <img src={resolveScanImageUrl(scan)} alt={`Scan ${scan.id}`} loading="lazy" />
+                        <img
+                          src={resolveScanImageUrl(scan)}
+                          alt={`Scan ${scan.id}`}
+                          loading="lazy"
+                          onError={handleScanImageError}
+                        />
                       ) : (
                         <span style={{ color: '#64748b', fontSize: 12 }}>No image</span>
                       )}
@@ -1623,6 +1638,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                   <img
                     src={resolveScanImageUrl(inspectedScan)}
                     alt={`Scan ${inspectedScan.id}`}
+                    onError={handleScanImageError}
                     style={{ objectFit: 'contain', maxHeight: 240, background: '#0f172a' }}
                   />
                 </div>

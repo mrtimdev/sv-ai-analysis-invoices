@@ -104,6 +104,9 @@ export function resolveScanApiUrl(pathOrUrl, configOverrides = {}) {
   const cfg = getScanApiConfig(configOverrides);
   const raw = String(pathOrUrl || '').trim();
   if (!raw) return cfg.apiServerBase;
+  if (raw.startsWith('/api/proxy') || raw.startsWith('data:') || raw.startsWith('blob:')) {
+    return raw;
+  }
   if (/^https?:\/\//i.test(raw)) {
     // If backend returned http://localhost/... but user configured a remote apiServerBase, rewrite origin to apiServerBase
     try {
@@ -245,18 +248,86 @@ export async function fetchScansPage({
 }
 
 /**
- * Resolves the scan's `imageUrl` field from `/v1/list/scans` (with fallback to `/v1/{scanId}/scan/image`).
+ * Resolves the scan's direct `imageUrl` using the public image endpoint:
+ * `${cfg.apiServerBase}/api/public/scans/${scanId}/image`
+ * (e.g. `http://45.201.196.19:3002/api/public/scans/34399/image`).
+ * Returns the direct URL for <img src="..."> tags.
  */
 export function resolveScanImageUrl(scan, configOverrides = {}) {
-  let rawUrl = '';
+  const cfg = getScanApiConfig(configOverrides);
+  if (!scan) return '';
+
   if (typeof scan === 'string') {
-    rawUrl = resolveScanApiUrl(scan, configOverrides);
-  } else if (scan && scan.imageUrl) {
-    rawUrl = resolveScanApiUrl(scan.imageUrl, configOverrides);
-  } else if (scan && scan.id != null) {
-    rawUrl = resolveScanApiUrl(`/v1/${encodeURIComponent(scan.id)}/scan/image`, configOverrides);
+    const s = scan.trim();
+    if (!s) return '';
+    if (s.startsWith('data:') || s.startsWith('blob:')) return s;
+
+    // Unwrap proxy if passed an existing /api/proxy?url=
+    if (s.startsWith('/api/proxy') || s.includes('/api/proxy?url=')) {
+      try {
+        const u = new URL(s, 'http://localhost');
+        const target = u.searchParams.get('url');
+        if (target) return resolveScanImageUrl(target, configOverrides);
+      } catch (_) {}
+    }
+
+    // Direct numeric ID
+    if (/^\d+$/.test(s)) {
+      return `${cfg.apiServerBase}/api/public/scans/${s}/image`;
+    }
+
+    // Match /scans/:id/image or /v1/:id/scan/image
+    const m = s.match(/\/(?:api\/public\/)?scans\/(\d+)\/image/i) || s.match(/\/v1\/(\d+)\/scan\/image/i);
+    if (m && m[1]) {
+      return `${cfg.apiServerBase}/api/public/scans/${m[1]}/image`;
+    }
+
+    // Absolute HTTP(S) URL
+    if (/^https?:\/\//i.test(s)) {
+      try {
+        const parsed = new URL(s);
+        const baseParsed = new URL(cfg.apiServerBase);
+        if ((parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') &&
+            baseParsed.hostname !== 'localhost' && baseParsed.hostname !== '127.0.0.1') {
+          return `${baseParsed.origin}${parsed.pathname}${parsed.search}`;
+        }
+      } catch (_) {}
+      return s;
+    }
+
+    return resolveScanApiUrl(s, configOverrides);
   }
-  return rawUrl ? wrapWithProxyIfNeeded(rawUrl, configOverrides) : '';
+
+  if (typeof scan === 'object') {
+    const id = scan.id ?? scan.scanId;
+    if (id != null && String(id).trim() !== '') {
+      return `${cfg.apiServerBase}/api/public/scans/${encodeURIComponent(String(id).trim())}/image`;
+    }
+    if (scan.imageUrl) {
+      return resolveScanImageUrl(scan.imageUrl, configOverrides);
+    }
+    if (scan.image) {
+      return resolveScanImageUrl(scan.image, configOverrides);
+    }
+  }
+
+  return '';
+}
+
+/**
+ * Fallback error handler for <img> tags. If direct HTTP image loading fails
+ * or is blocked on an HTTPS origin, automatically falls back to /api/proxy.
+ */
+export function handleScanImageError(e) {
+  if (!e || !e.currentTarget) return;
+  const img = e.currentTarget;
+  const cur = img.getAttribute('src') || img.src || '';
+  if (!cur || cur.includes('/api/proxy') || cur.startsWith('data:') || cur.startsWith('blob:')) {
+    return;
+  }
+  if (/^https?:\/\//i.test(cur)) {
+    img.src = `/api/proxy?url=${encodeURIComponent(cur)}`;
+  }
 }
 
 /**
@@ -287,27 +358,32 @@ export async function fetchScanById(scanId, { configOverrides = {}, signal } = {
  * and compresses it to a base64 JPEG dataUrl for `extractWithAI(dataUrl)`.
  */
 export async function fetchScanImageDataUrl(scanOrImageUrl, scanId, { configOverrides = {}, signal } = {}) {
-  const primaryRaw = typeof scanOrImageUrl === 'object' && scanOrImageUrl !== null
-    ? resolveScanImageUrl(scanOrImageUrl, configOverrides)
-    : resolveScanApiUrl(scanOrImageUrl, configOverrides);
-  const primaryUrl = wrapWithProxyIfNeeded(primaryRaw, configOverrides);
+  const cfg = getScanApiConfig(configOverrides);
   const resolvedId = scanId ?? (typeof scanOrImageUrl === 'object' ? scanOrImageUrl?.id : null);
-  const fallbackRaw = resolvedId != null
-    ? resolveScanApiUrl(`/v1/${encodeURIComponent(resolvedId)}/scan/image`, configOverrides)
+
+  const directUrl = resolveScanImageUrl(scanOrImageUrl, configOverrides) ||
+    (resolvedId != null ? `${cfg.apiServerBase}/api/public/scans/${encodeURIComponent(resolvedId)}/image` : null);
+
+  const fallbackDirect = resolvedId != null
+    ? `${cfg.apiServerBase}/v1/${encodeURIComponent(resolvedId)}/scan/image`
     : null;
-  const fallbackUrl = fallbackRaw ? wrapWithProxyIfNeeded(fallbackRaw, configOverrides) : null;
+
+  const primaryUrl = directUrl ? wrapWithProxyIfNeeded(directUrl, configOverrides) : '';
+  const fallbackUrl = fallbackDirect ? wrapWithProxyIfNeeded(fallbackDirect, configOverrides) : '';
 
   let resp;
   try {
-    resp = await fetch(primaryUrl, { signal });
-    if (!resp.ok && fallbackUrl && fallbackUrl !== primaryUrl) {
+    if (primaryUrl) {
+      resp = await fetch(primaryUrl, { signal });
+    }
+    if ((!resp || !resp.ok) && fallbackUrl && fallbackUrl !== primaryUrl) {
       resp = await fetch(fallbackUrl, { signal });
     }
   } catch (err) {
     if (fallbackUrl && fallbackUrl !== primaryUrl) {
       resp = await fetch(fallbackUrl, { signal });
     } else {
-      throw new Error(`Could not fetch scan image (${primaryRaw}): ${err.message}`);
+      throw new Error(`Could not fetch scan image (${primaryUrl || directUrl}): ${err.message}`);
     }
   }
 
