@@ -151,9 +151,9 @@ export default function App() {
     <div className="shell">
       <aside className="sidebar">
         <div className="logo">
-          <div className="mark">P</div>
+          <div className="mark">SV</div>
           <div>
-            <div className="t">Projects</div>
+            <div className="t">SV AI Analysis</div>
             <div className="s">Invoice intelligence</div>
           </div>
         </div>

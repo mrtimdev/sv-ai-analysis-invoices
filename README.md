@@ -1,4 +1,4 @@
-# Projects App — KHB Invoice Intelligence & Server Scans (`/v1`) Mission Control
+# sv-ai-analysis-invoices — KHB Invoice Intelligence & Server Scans (`/v1`) Mission Control
 
 Standalone React + Vite application for extracting KHB document headers & line items with Vision AI and syncing directly with the unauthenticated `/v1` Scan Backend API (`GET /v1/list/scans`, `GET /v1/{scanId}/scan`, `POST /v1/{scanId}/scan`, `POST /v1/list/scans`).
 
