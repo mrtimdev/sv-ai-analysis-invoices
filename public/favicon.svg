@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b0f19"/>
+      <stop offset="50%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#030712"/>
+    </linearGradient>
+
+    <!-- Outer Glow / Rim Gradient -->
+    <linearGradient id="rimGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="50%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#c084fc"/>
+    </linearGradient>
+
+    <!-- Invoice Sheet Gradient -->
+    <linearGradient id="docGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#e2e8f0"/>
+    </linearGradient>
+
+    <!-- Laser Beam Gradient -->
+    <linearGradient id="laserGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#06b6d4" stop-opacity="0"/>
+      <stop offset="15%" stop-color="#06b6d4" stop-opacity="0.9"/>
+      <stop offset="50%" stop-color="#38bdf8"/>
+      <stop offset="85%" stop-color="#06b6d4" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Laser Core Gradient -->
+    <linearGradient id="laserCore" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="15%" stop-color="#38bdf8" stop-opacity="0"/>
+      <stop offset="30%" stop-color="#ffffff"/>
+      <stop offset="50%" stop-color="#ffffff"/>
+      <stop offset="70%" stop-color="#ffffff"/>
+      <stop offset="85%" stop-color="#38bdf8" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Sparkle Gradient -->
+    <linearGradient id="sparkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#67e8f9"/>
+      <stop offset="50%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#f43f5e"/>
+    </linearGradient>
+
+    <filter id="laserGlow" x="-20%" y="-100%" width="140%" height="300%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="neonGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Squircle Base -->
+  <rect x="24" y="24" width="464" height="464" rx="116" fill="url(#bgGrad)"/>
+  <!-- Glowing Rim -->
+  <rect x="24" y="24" width="464" height="464" rx="116" fill="none" stroke="url(#rimGrad)" stroke-width="12" opacity="0.9"/>
+
+  <!-- Subtle ambient inner glow -->
+  <circle cx="256" cy="256" r="130" fill="#38bdf8" opacity="0.15"/>
+
+  <!-- Document / Invoice Page with Folded Corner -->
+  <path d="M 148 96 
+           L 316 96 
+           L 388 168 
+           L 388 396 
+           A 22 22 0 0 1 366 418 
+           L 148 418 
+           A 22 22 0 0 1 126 396 
+           L 126 118 
+           A 22 22 0 0 1 148 96 Z"
+        fill="url(#docGrad)"/>
+
+  <!-- Fold flap corner -->
+  <path d="M 316 96 
+           L 316 150 
+           A 18 18 0 0 0 334 168 
+           L 388 168 Z" 
+        fill="#94a3b8"/>
+  <path d="M 316 96 
+           L 316 150 
+           A 18 18 0 0 0 334 168 
+           L 388 168 Z" 
+        fill="url(#sparkGrad)" opacity="0.4"/>
+
+  <!-- Document Header Bar -->
+  <rect x="160" y="140" width="124" height="20" rx="8" fill="#3b82f6" opacity="0.9"/>
+
+  <!-- Invoice Data Lines -->
+  <rect x="160" y="184" width="192" height="14" rx="7" fill="#64748b" opacity="0.5"/>
+  <rect x="160" y="214" width="144" height="14" rx="7" fill="#64748b" opacity="0.4"/>
+  <rect x="160" y="244" width="176" height="14" rx="7" fill="#64748b" opacity="0.4"/>
+
+  <!-- Invoice Table Rows Divider & Total Badges -->
+  <rect x="160" y="324" width="192" height="12" rx="6" fill="#64748b" opacity="0.4"/>
+  <rect x="160" y="354" width="94" height="20" rx="8" fill="#0ea5e9" opacity="0.85"/>
+  <rect x="268" y="354" width="84" height="20" rx="8" fill="#10b981" opacity="0.9"/>
+
+  <!-- AI Laser Scanner Beam (Glowing across center of document) -->
+  <rect x="76" y="270" width="360" height="26" rx="13" fill="url(#laserGrad)" opacity="0.85" filter="url(#laserGlow)"/>
+  <rect x="92" y="280" width="328" height="6" rx="3" fill="url(#laserCore)"/>
+
+  <!-- Scanning sensor dots on laser endpoints -->
+  <circle cx="96" cy="283" r="5" fill="#38bdf8"/>
+  <circle cx="416" cy="283" r="5" fill="#38bdf8"/>
+
+  <!-- Glowing AI Sparkle ✦ in top-right -->
+  <g transform="translate(372, 78)" filter="url(#neonGlow)">
+    <path d="M 0 -36 
+             C 2 -10 10 -2 36 0 
+             C 10 2 2 10 0 36 
+             C -2 10 -10 2 -36 0 
+             C -10 -2 -2 -10 0 -36 Z" 
+          fill="url(#sparkGrad)"/>
+    <circle cx="0" cy="0" r="6" fill="#ffffff"/>
+  </g>
+
+  <!-- Small secondary sparkle in bottom-left -->
+  <g transform="translate(112, 386)" opacity="0.8">
+    <path d="M 0 -18 
+             C 1 -5 5 -1 18 0 
+             C 5 1 1 5 0 18 
+             C -1 5 -5 1 -18 0 
+             C -5 -1 -1 -5 0 -18 Z" 
+          fill="#38bdf8"/>
+    <circle cx="0" cy="0" r="3" fill="#ffffff"/>
+  </g>
+</svg>
