@@ -18,7 +18,7 @@ import SettingsModal from './components/SettingsModal.jsx';
 import { Ic } from './components/icons.jsx';
 
 const TABS = [
-  { id: 'server', label: 'Server Scans (/v1)', icon: Ic.queue },
+  { id: 'server', label: 'Server Scans', icon: Ic.queue },
   { id: 'queue', label: 'Batch Queue', icon: Ic.folder },
   { id: 'capture', label: 'Capture', icon: Ic.capture },
   { id: 'list', label: 'Invoices', icon: Ic.invoices },
@@ -189,7 +189,7 @@ export default function App() {
               <span className="pulse" style={{ borderColor: '#818cf8', borderTopColor: '#fff' }} />
               <div>
                 <div style={{ fontWeight: 800, fontSize: 13 }}>
-                  Server Scans (/v1) AI Job Running in Background
+                  Server Scans AI Job Running in Background
                 </div>
                 <div style={{ fontSize: 11.5, color: '#cbd5e1' }}>
                   {jobSnapshot.serverJob.stats?.bannerMsg || 'Processing scans…'} · Updated:{' '}
@@ -203,7 +203,7 @@ export default function App() {
                 className="v1-btn-dark"
                 onClick={() => switchTab('server')}
               >
-                Open Mission Control
+                Open Server Scans
               </button>
               <button
                 type="button"

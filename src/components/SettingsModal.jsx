@@ -250,7 +250,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                 style={{ marginTop: 2 }}
               />
               <span>
-                <b>Auto-resume active jobs</b> on page refresh or re-open if Server Scans (/v1) or Batch Queue was running when you left.
+                <b>Auto-resume active jobs</b> on page refresh or re-open if Server Scans or Batch Queue was running when you left.
               </span>
             </label>
           </div>

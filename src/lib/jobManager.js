@@ -732,7 +732,7 @@ export async function bootPersistentJobs({
 
       const s = getSettings();
       if (wasRunningBeforeUnload && s.key && s.base) {
-        onToast?.(`Auto-resuming Server Scans (/v1) job on page ${(savedServerJob.page || 0) + 1}…`);
+        onToast?.(`Auto-resuming Server Scans job on page ${(savedServerJob.page || 0) + 1}…`);
         setTimeout(() => {
           startServerScanJob({
             page: savedServerJob.page || 0,

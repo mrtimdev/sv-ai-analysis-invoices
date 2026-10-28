@@ -210,8 +210,9 @@ label.f input.full{grid-column:1/-1}
 .cellinput.num{text-align:right}
 @media(max-width:640px){.hidemid{display:none}}
 
-/* ============ Creative Server Scans (/v1) Mission Control UI ============ */
+/* ============ Server Scans UI ============ */
 .v1-hero {
+  display: none !important;
   background: radial-gradient(900px 280px at 95% -15%, rgba(99, 102, 241, 0.35), transparent 65%),
               radial-gradient(600px 250px at 5% 120%, rgba(16, 185, 129, 0.22), transparent 60%),
               linear-gradient(135deg, #0b1120 0%, #131c33 55%, #1e1b4b 100%);

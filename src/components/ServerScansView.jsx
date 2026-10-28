@@ -498,98 +498,6 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
 
   return (
     <React.Fragment>
-      {/* 1. Creative Mission Control Hero Header */}
-      <div className="v1-hero">
-        <div className="v1-hero-top">
-          <div className="v1-hero-title">
-            <div className="v1-hero-icon">
-              <Ic.spark />
-            </div>
-            <div>
-              <h2>KHB Server Scans AI Mission Control</h2>
-              <div className="v1-hero-sub">
-                Autonomous pipeline · Fetches <code>imageUrl</code>, extracts KHB headers &amp; line items with Vision AI, and syncs <code>reviewStatus = APPROVED</code>
-              </div>
-            </div>
-          </div>
-
-          <div className="v1-hero-actions">
-            <button type="button" className="v1-btn-dark" onClick={openSettings}>
-              <Ic.settings className="ic" /> /v1 API Settings
-            </button>
-            <button
-              type="button"
-              className="v1-btn-dark"
-              onClick={() => loadPage(page, size, sort, filters)}
-              disabled={loadingPage}
-            >
-              <Ic.retry className="ic" /> {loadingPage ? 'Refreshing…' : 'Sync Page'}
-            </button>
-          </div>
-        </div>
-
-        <div className="v1-chip-row">
-          <span className="v1-chip">
-            <span className="live-dot" /> Server: <code>{cfg.apiServerBase}</code>
-          </span>
-          <span className="v1-chip">
-            GET List: <code>{cfg.v1ListScansPath}</code>
-          </span>
-          <span className="v1-chip">
-            POST Target:{' '}
-            <code>{updateMode === 'batch' ? cfg.v1ListScansPath : cfg.v1SingleScanPath}</code>
-          </span>
-          <span className="v1-chip">
-            <span className={aiReady ? 'live-dot' : 'warn-dot'} /> AI Model:{' '}
-            <code>{s.model || 'gpt-4o-mini'}</code>
-          </span>
-          <span className="v1-chip">
-            <Ic.bolt style={{ width: 13, height: 13, color: '#38bdf8' }} /> Persistent Background Runner:{' '}
-            <b style={{ color: '#6ee7b7' }}>Active (Survives Refresh &amp; Tab Switch)</b>
-          </span>
-        </div>
-
-        <div className="v1-pipeline">
-          <div className={'v1-step' + (loadingPage ? ' active' : '')}>
-            <div className="v1-step-num">1</div>
-            <div className="v1-step-txt">
-              <div className="t">GET /v1/list/scans</div>
-              <div className="s">
-                Page {pageData.number + 1}/{pageData.totalPages} · {pageData.totalElements.toLocaleString()} scans
-              </div>
-            </div>
-          </div>
-          <div className={'v1-step' + (running && activeScan?.stage === 'analyzing' ? ' active' : '')}>
-            <div className="v1-step-num">2</div>
-            <div className="v1-step-txt">
-              <div className="t">Vision AI Analyze</div>
-              <div className="s">Stream imageUrl → KHB JSON</div>
-            </div>
-          </div>
-          <div
-            className={
-              'v1-step' +
-              (running && (activeScan?.stage === 'updated' || activeScan?.stage === 'batch_posting')
-                ? ' active'
-                : '')
-            }
-          >
-            <div className="v1-step-num">3</div>
-            <div className="v1-step-txt">
-              <div className="t">POST Update Scan</div>
-              <div className="s">reviewStatus = APPROVED + items</div>
-            </div>
-          </div>
-          <div className={'v1-step' + (autoNextPage && running ? ' active' : '')}>
-            <div className="v1-step-num">4</div>
-            <div className="v1-step-txt">
-              <div className="t">Auto-Next Page &amp; Resume</div>
-              <div className="s">{autoNextPage ? 'Enabled · Continuous loop' : 'Single page mode'}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* 2. Live AI Telemetry Spotlight (shown while running or paused with progress) */}
       {(running || paused || activityFeed.length > 0) && (
         <div className="v1-spotlight">
@@ -770,7 +678,24 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
             </button>
           </div>
 
-          <div className="row" style={{ gap: 8 }}>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn sm"
+              onClick={() => loadPage(page, size, sort, filters)}
+              disabled={loadingPage}
+              title="Refresh / sync page from server"
+            >
+              <Ic.retry className="ic" /> {loadingPage ? 'Refreshing…' : 'Sync Page'}
+            </button>
+            <button
+              type="button"
+              className="btn sm"
+              onClick={openSettings}
+              title="Server API Settings"
+            >
+              <Ic.settings className="ic" /> API Settings
+            </button>
             <div className="v1-seg">
               <button
                 type="button"
