@@ -127,6 +127,84 @@ export async function extractWithAI(dataUrl){
   throw lastErr || new Error("Model did not return JSON");
 }
 
+/**
+ * Queries the OpenAI-compatible GET /models endpoint for the given base URL and API key.
+ * Parses standard OpenAI data.data, Google/Ollama models array, or raw lists,
+ * returning a sorted list of unique model IDs.
+ */
+export async function fetchAIModels({ base, key, signal } = {}) {
+  const urlBase = String(base || '').trim();
+  if (!urlBase) {
+    throw new Error('AI API Base URL is required to load models.');
+  }
+  const cleanBase = urlBase.replace(/\/+$/, '');
+  const modelsUrl = cleanBase.endsWith('/models') ? cleanBase : `${cleanBase}/models`;
+
+  const headers = {
+    Accept: 'application/json',
+  };
+  const cleanKey = String(key || '').trim();
+  if (cleanKey) {
+    headers.Authorization = `Bearer ${cleanKey}`;
+  }
+
+  let resp;
+  try {
+    resp = await fetch(modelsUrl, {
+      method: 'GET',
+      headers,
+      signal,
+    });
+  } catch (err) {
+    throw new Error(`Network error connecting to ${modelsUrl}: ${err.message}. If calling an external provider from browser, ensure CORS is allowed.`);
+  }
+
+  if (!resp.ok) {
+    let errText = '';
+    try {
+      const errJson = await resp.json();
+      errText = errJson.error?.message || errJson.message || JSON.stringify(errJson);
+    } catch (_) {
+      errText = await resp.text().catch(() => '');
+    }
+    throw new Error(`Failed to load models (${resp.status}): ${errText.slice(0, 200)}`);
+  }
+
+  const json = await resp.json();
+  const rawList = Array.isArray(json)
+    ? json
+    : Array.isArray(json?.data)
+    ? json.data
+    : Array.isArray(json?.models)
+    ? json.models
+    : [];
+
+  if (!rawList.length) {
+    throw new Error('No models found in the provider response.');
+  }
+
+  const modelIds = new Set();
+  rawList.forEach((item) => {
+    let id = '';
+    if (typeof item === 'string') {
+      id = item.trim();
+    } else if (item && typeof item === 'object') {
+      id = String(item.id || item.name || '').trim();
+    }
+    if (id) {
+      modelIds.add(id);
+    }
+  });
+
+  const sorted = Array.from(modelIds).sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: 'base' })
+  );
+  if (!sorted.length) {
+    throw new Error('No valid model IDs could be extracted from provider response.');
+  }
+  return sorted;
+}
+
 export {
   getScanApiConfig,
   fetchScansPage,

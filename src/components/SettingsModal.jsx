@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getSettings, saveSettings } from '../lib/db.js';
 import { getScanApiConfig, fetchScansPage } from '../lib/scanApi.js';
+import { fetchAIModels } from '../lib/ai.js';
 
 export default function SettingsModal({ open, onClose, onSaved }) {
   const s = getSettings();
@@ -26,6 +27,11 @@ export default function SettingsModal({ open, onClose, onSaved }) {
   const [testingV1, setTestingV1] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
+  // Model loading state
+  const [availableModels, setAvailableModels] = useState([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [modelStatus, setModelStatus] = useState(null);
+
   useEffect(() => {
     if (open) {
       const cur = getSettings();
@@ -44,10 +50,40 @@ export default function SettingsModal({ open, onClose, onSaved }) {
       setV1AutoNextPage(cur.v1AutoNextPage !== undefined ? !!cur.v1AutoNextPage : true);
       setV1SkipApproved(!!cur.v1SkipApproved);
       setTestResult(null);
+      setModelStatus(null);
     }
   }, [open]);
 
   if (!open) return null;
+
+  const handleLoadModels = async () => {
+    if (!base.trim()) {
+      setModelStatus({ ok: false, msg: 'Enter AI API Base URL first' });
+      return;
+    }
+    setLoadingModels(true);
+    setModelStatus(null);
+    try {
+      const list = await fetchAIModels({ base: base.trim(), key: key.trim() });
+      setAvailableModels(list);
+      setModelStatus({
+        ok: true,
+        msg: `Loaded ${list.length} model(s) from API ✓`,
+      });
+      if (!model.trim() && list.length > 0) {
+        const preferred =
+          list.find((m) => /vision|flash|4o|gemini|vl|qwen/i.test(m)) || list[0];
+        setModel(preferred);
+      }
+    } catch (err) {
+      setModelStatus({
+        ok: false,
+        msg: err.message || 'Failed to load models',
+      });
+    } finally {
+      setLoadingModels(false);
+    }
+  };
 
   const testV1Connection = async () => {
     setTestingV1(true);
@@ -105,23 +141,117 @@ export default function SettingsModal({ open, onClose, onSaved }) {
         </div>
         <div className="mbody">
           {/* 1. AI Vision API Section */}
-          <h2 style={{ fontSize: 13.5, marginBottom: 6 }}>1. AI Vision API (Image Extraction)</h2>
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <h2 style={{ fontSize: 13.5, margin: 0 }}>1. AI Vision API (Image Extraction)</h2>
+            <button
+              type="button"
+              className="btn sm"
+              onClick={handleLoadModels}
+              disabled={loadingModels || !base.trim()}
+              title="Query GET /models from the entered AI API Base URL"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+            >
+              {loadingModels ? <span className="pulse" /> : '⚡'}
+              {loadingModels ? 'Loading Models…' : 'Load Models'}
+            </button>
+          </div>
           <p style={{ color: 'var(--muted)', fontSize: 12.5, marginBottom: 12 }}>
-            Uses an OpenAI-compatible vision API (OpenAI, OmniRoute, OpenRouter, DashScope, etc.) with the KHB extraction protocol in <code>src/lib/ai.js</code>.
+            Uses an OpenAI-compatible vision API (OpenAI, OmniRoute, OpenRouter, DashScope, Ollama, etc.) with the KHB extraction protocol in <code>src/lib/ai.js</code>.
           </p>
+
+          {modelStatus && (
+            <div
+              className="note"
+              style={{
+                marginBottom: 12,
+                padding: '8px 12px',
+                fontSize: 12,
+                background: modelStatus.ok ? '#ecfdf5' : '#fef2f2',
+                borderColor: modelStatus.ok ? '#a7f3d0' : '#fecaca',
+                color: modelStatus.ok ? '#065f46' : '#991b1b',
+              }}
+            >
+              {modelStatus.msg}
+            </div>
+          )}
+
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
             <label className="f" style={{ gridColumn: '1 / -1' }}>
               AI API Base URL
-              <input value={base} onChange={(e) => setBase(e.target.value)} placeholder="http://127.0.0.1:20128/v1 or https://api.openai.com/v1" />
+              <input
+                value={base}
+                onChange={(e) => setBase(e.target.value)}
+                placeholder="http://127.0.0.1:20128/v1 or https://api.openai.com/v1"
+              />
             </label>
             <label className="f">
               AI API Key
-              <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="sk-…" />
+              <input
+                type="password"
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+                placeholder="sk-…"
+              />
             </label>
             <label className="f">
               Vision Model
-              <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="antigravity/gemini-3.8-flash-low" />
+              <input
+                list="model-datalist"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="e.g. gpt-4o-mini, gemini-2.0-flash, antigravity/gemini-3.8-flash-low"
+              />
+              <datalist id="model-datalist">
+                {availableModels.map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
             </label>
+          </div>
+
+          {availableModels.length > 0 && (
+            <div style={{ marginTop: 8, marginBottom: 10 }}>
+              <label style={{ fontSize: 11.5, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>
+                Select from {availableModels.length} loaded models:
+              </label>
+              <select
+                value={availableModels.includes(model) ? model : ''}
+                onChange={(e) => {
+                  if (e.target.value) setModel(e.target.value);
+                }}
+                style={{ width: '100%', fontSize: 12.5 }}
+              >
+                <option value="">-- Choose Loaded Model ({availableModels.length}) --</option>
+                {availableModels.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Quick presets for common vision models */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>
+            <span style={{ fontSize: 11, color: 'var(--muted)' }}>Presets:</span>
+            {['gpt-4o-mini', 'gpt-4o', 'gemini-2.0-flash', 'antigravity/gemini-3.8-flash-low', 'qwen-vl-max'].map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setModel(p)}
+                className="btn sm"
+                style={{
+                  padding: '1px 8px',
+                  fontSize: 11,
+                  borderRadius: 999,
+                  border: model === p ? '1px solid var(--accent)' : '1px solid var(--line)',
+                  background: model === p ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
+                  color: model === p ? 'var(--accent)' : 'var(--muted)',
+                }}
+              >
+                {p}
+              </button>
+            ))}
           </div>
 
           <div style={{ height: 1, background: 'var(--line)', margin: '18px 0 14px' }} />
