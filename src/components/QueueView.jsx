@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import Select from 'react-select';
 import { getAll, put, get, del, clearStore, getSettings } from '../lib/db.js';
 import {
   getJobManagerSnapshot,
@@ -12,6 +13,15 @@ import { ingestDataTransfer, ingestFileList, ingestFile } from '../lib/ingest.js
 import { exportExcel } from '../lib/excel.js';
 import { fmtEta } from '../lib/util.js';
 import { Ic } from './icons.jsx';
+import { coolSelectStyles } from './coolSelectTheme.js';
+
+const CHUNK_OPTIONS = [
+  { value: '25', label: '25 files' },
+  { value: '50', label: '50 files' },
+  { value: '100', label: '100 files' },
+  { value: 'all', label: 'All at once' },
+  { value: 'custom', label: 'Custom…' },
+];
 
 export default function QueueView({ toast, openSettings, onRecordsChanged, openDetail }) {
   const initSnap = getJobManagerSnapshot().localQueue;
@@ -376,15 +386,30 @@ export default function QueueView({ toast, openSettings, onRecordsChanged, openD
                 </button>
               </React.Fragment>
             )}
-            <div className="selbox">
-              Per batch:
-              <select value={chunk} onChange={(e) => saveChunk(e.target.value)}>
-                <option value="25">25 files</option>
-                <option value="50">50 files</option>
-                <option value="100">100 files</option>
-                <option value="all">All at once</option>
-                <option value="custom">Custom…</option>
-              </select>
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                background: '#f8fafc',
+                border: '1px solid var(--line, #e2e8f0)',
+                borderRadius: 10,
+                padding: '2px 8px 2px 12px',
+                fontSize: 12.5,
+                fontWeight: 600,
+              }}
+            >
+              <span style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>Per batch:</span>
+              <div style={{ minWidth: 145 }}>
+                <Select
+                  styles={coolSelectStyles}
+                  isSearchable={false}
+                  options={CHUNK_OPTIONS}
+                  value={CHUNK_OPTIONS.find((o) => o.value === chunk) || CHUNK_OPTIONS[1]}
+                  onChange={(opt) => saveChunk(opt ? opt.value : '50')}
+                  menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
+                />
+              </div>
               {chunk === 'custom' && (
                 <input
                   type="number"
@@ -392,6 +417,15 @@ export default function QueueView({ toast, openSettings, onRecordsChanged, openD
                   value={chunkCustom}
                   onChange={(e) => {
                     setLocalQueueChunkConfig(undefined, e.target.value);
+                  }}
+                  style={{
+                    width: 70,
+                    height: 38,
+                    borderRadius: 10,
+                    border: '1px solid var(--line, #cbd5e1)',
+                    padding: '0 8px',
+                    fontSize: 13,
+                    fontWeight: 600,
                   }}
                 />
               )}

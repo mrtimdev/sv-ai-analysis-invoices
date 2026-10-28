@@ -1,7 +1,26 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import Select from 'react-select';
+import CreatableSelect from 'react-select/creatable';
 import { getSettings, saveSettings } from '../lib/db.js';
 import { getScanApiConfig, fetchScansPage } from '../lib/scanApi.js';
 import { fetchAIModels } from '../lib/ai.js';
+import { coolSelectStyles } from './coolSelectTheme.js';
+
+const UPDATE_MODE_OPTIONS = [
+  { value: 'single', label: 'Single Update (POST /v1/{scanId}/scan per scan)' },
+  { value: 'batch', label: 'Batch Update (POST /v1/list/scans per page)' },
+  { value: 'both', label: 'Both (Single immediately + Batch page confirm)' },
+];
+
+const PAGE_SIZE_OPTIONS = [
+  { value: '25', label: '25 scans / page' },
+  { value: '50', label: '50 scans / page' },
+  { value: '100', label: '100 scans / page' },
+  { value: '250', label: '250 scans / page' },
+  { value: '500', label: '500 scans / page' },
+  { value: '1000', label: '1000 scans / page' },
+  { value: 'all', label: 'All scans (unpaged)' },
+];
 
 export default function SettingsModal({ open, onClose, onSaved }) {
   const s = getSettings();
@@ -31,6 +50,14 @@ export default function SettingsModal({ open, onClose, onSaved }) {
   const [availableModels, setAvailableModels] = useState([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelStatus, setModelStatus] = useState(null);
+
+  const modelOptions = useMemo(() => {
+    const list = availableModels.map((m) => ({ value: m, label: m }));
+    if (model && !availableModels.includes(model)) {
+      return [{ value: model, label: `${model} (custom)` }, ...list];
+    }
+    return list;
+  }, [availableModels, model]);
 
   useEffect(() => {
     if (open) {
@@ -194,42 +221,36 @@ export default function SettingsModal({ open, onClose, onSaved }) {
               />
             </label>
             <label className="f">
-              Vision Model
-              <input
-                list="model-datalist"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="e.g. gpt-4o-mini, gemini-2.0-flash, antigravity/gemini-3.8-flash-low"
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span>Vision Model</span>
+                {availableModels.length > 0 && (
+                  <span style={{ fontSize: 11, color: '#059669', fontWeight: 600 }}>
+                    {availableModels.length} models loaded
+                  </span>
+                )}
+              </div>
+              <CreatableSelect
+                isClearable
+                isSearchable
+                menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
+                styles={coolSelectStyles}
+                placeholder={
+                  availableModels.length > 0
+                    ? `Search ${availableModels.length} models or type custom…`
+                    : 'Select or type vision model…'
+                }
+                noOptionsMessage={() =>
+                  availableModels.length === 0
+                    ? 'Click "Load Models" above or type a custom model'
+                    : 'No matching models'
+                }
+                formatCreateLabel={(val) => `Use custom model: "${val}"`}
+                value={model ? { value: model, label: model } : null}
+                onChange={(opt) => setModel(opt ? opt.value : '')}
+                options={modelOptions}
               />
-              <datalist id="model-datalist">
-                {availableModels.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
             </label>
           </div>
-
-          {availableModels.length > 0 && (
-            <div style={{ marginTop: 8, marginBottom: 10 }}>
-              <label style={{ fontSize: 11.5, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>
-                Select from {availableModels.length} loaded models:
-              </label>
-              <select
-                value={availableModels.includes(model) ? model : ''}
-                onChange={(e) => {
-                  if (e.target.value) setModel(e.target.value);
-                }}
-                style={{ width: '100%', fontSize: 12.5 }}
-              >
-                <option value="">-- Choose Loaded Model ({availableModels.length}) --</option>
-                {availableModels.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
 
           {/* Quick presets for common vision models */}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>
@@ -316,23 +337,25 @@ export default function SettingsModal({ open, onClose, onSaved }) {
             </label>
             <label className="f">
               Post-Analyze Update Mode
-              <select value={v1UpdateMode} onChange={(e) => setV1UpdateMode(e.target.value)}>
-                <option value="single">Single Update (POST /v1/&#123;scanId&#125;/scan per scan)</option>
-                <option value="batch">Batch Update (POST /v1/list/scans per page)</option>
-                <option value="both">Both (Single immediately + Batch page confirm)</option>
-              </select>
+              <Select
+                isSearchable={false}
+                menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
+                styles={coolSelectStyles}
+                value={UPDATE_MODE_OPTIONS.find((opt) => opt.value === v1UpdateMode)}
+                onChange={(opt) => setV1UpdateMode(opt ? opt.value : 'single')}
+                options={UPDATE_MODE_OPTIONS}
+              />
             </label>
             <label className="f">
               Default Page Size
-              <select value={v1PageSize} onChange={(e) => setV1PageSize(e.target.value)}>
-                <option value="25">25 scans / page</option>
-                <option value="50">50 scans / page</option>
-                <option value="100">100 scans / page</option>
-                <option value="250">250 scans / page</option>
-                <option value="500">500 scans / page</option>
-                <option value="1000">1000 scans / page</option>
-                <option value="all">All scans (unpaged)</option>
-              </select>
+              <Select
+                isSearchable={false}
+                menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
+                styles={coolSelectStyles}
+                value={PAGE_SIZE_OPTIONS.find((opt) => opt.value === v1PageSize)}
+                onChange={(opt) => setV1PageSize(opt ? opt.value : '50')}
+                options={PAGE_SIZE_OPTIONS}
+              />
             </label>
             <label className="f" style={{ gridColumn: '1 / -1' }}>
               Excel Hyperlink Scan Base URL (optional)

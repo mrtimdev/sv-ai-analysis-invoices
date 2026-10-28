@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import Select from 'react-select';
 import { getSettings } from '../lib/db.js';
 import {
   getScanApiConfig,
@@ -20,6 +21,47 @@ import {
 } from '../lib/jobManager.js';
 import { fmtEta } from '../lib/util.js';
 import { Ic } from './icons.jsx';
+import { coolSelectStyles } from './coolSelectTheme.js';
+
+const STATUS_OPTIONS = [
+  { value: '', label: 'All statuses' },
+  { value: 'PENDING', label: 'PENDING' },
+  { value: 'PROCESSING', label: 'PROCESSING' },
+  { value: 'COMPLETED', label: 'COMPLETED' },
+  { value: 'FAILED', label: 'FAILED' },
+];
+
+const REVIEW_STATUS_OPTIONS = [
+  { value: '', label: 'All review' },
+  { value: 'PENDING', label: 'PENDING' },
+  { value: 'APPROVED', label: 'APPROVED' },
+  { value: 'REJECTED', label: 'REJECTED' },
+];
+
+const PAGE_SIZE_OPTIONS = [
+  { value: '25', label: '25 / page' },
+  { value: '50', label: '50 / page' },
+  { value: '100', label: '100 / page' },
+  { value: '250', label: '250 / page' },
+  { value: '500', label: '500 / page' },
+  { value: '1000', label: '1000 / page' },
+  { value: 'all', label: 'All (unpaged)' },
+];
+
+const SORT_OPTIONS = [
+  { value: 'createdAt,desc', label: 'Newest uploaded (createdAt,desc)' },
+  { value: 'createdAt,asc', label: 'Oldest uploaded (createdAt,asc)' },
+  { value: 'id,desc', label: 'Scan ID descending (id,desc)' },
+  { value: 'id,asc', label: 'Scan ID ascending (id,asc)' },
+  { value: 'invoiceDate,desc', label: 'Invoice date desc' },
+  { value: 'invoiceNo,asc', label: 'Invoice No. asc' },
+];
+
+const POST_MODE_OPTIONS = [
+  { value: 'single', label: 'Single (POST /v1/{scanId}/scan)' },
+  { value: 'batch', label: 'Batch (POST /v1/list/scans)' },
+  { value: 'both', label: 'Both (Single + Batch)' },
+];
 
 function buildPageNumbers(currentZeroBased, totalPages) {
   const cur = currentZeroBased + 1;
@@ -740,55 +782,48 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
             </label>
             <label className="f">
               Scan Status
-              <select
-                value={filters.status}
-                onChange={(e) => {
-                  const val = e.target.value;
+              <Select
+                styles={coolSelectStyles}
+                isSearchable={false}
+                options={STATUS_OPTIONS}
+                value={STATUS_OPTIONS.find((o) => o.value === filters.status) || STATUS_OPTIONS[0]}
+                onChange={(opt) => {
+                  const val = opt ? opt.value : '';
                   setFilterField('status', val);
                   loadPage(0, size, sort, { ...filters, status: val });
                 }}
-              >
-                <option value="">All statuses</option>
-                <option value="PENDING">PENDING</option>
-                <option value="PROCESSING">PROCESSING</option>
-                <option value="COMPLETED">COMPLETED</option>
-                <option value="FAILED">FAILED</option>
-              </select>
+                menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
+              />
             </label>
             <label className="f">
               Review Status
-              <select
-                value={filters.reviewStatus}
-                onChange={(e) => {
-                  const val = e.target.value;
+              <Select
+                styles={coolSelectStyles}
+                isSearchable={false}
+                options={REVIEW_STATUS_OPTIONS}
+                value={REVIEW_STATUS_OPTIONS.find((o) => o.value === filters.reviewStatus) || REVIEW_STATUS_OPTIONS[0]}
+                onChange={(opt) => {
+                  const val = opt ? opt.value : '';
                   setFilterField('reviewStatus', val);
                   loadPage(0, size, sort, { ...filters, reviewStatus: val });
                 }}
-              >
-                <option value="">All review</option>
-                <option value="PENDING">PENDING</option>
-                <option value="APPROVED">APPROVED</option>
-                <option value="REJECTED">REJECTED</option>
-              </select>
+                menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
+              />
             </label>
             <label className="f">
               Page Size
-              <select
-                value={size}
-                onChange={(e) => {
-                  const nextSize = e.target.value;
+              <Select
+                styles={coolSelectStyles}
+                isSearchable={false}
+                options={PAGE_SIZE_OPTIONS}
+                value={PAGE_SIZE_OPTIONS.find((o) => String(o.value) === String(size)) || PAGE_SIZE_OPTIONS[1]}
+                onChange={(opt) => {
+                  const nextSize = opt ? opt.value : '50';
                   setSize(nextSize);
                   loadPage(0, nextSize, sort, filters);
                 }}
-              >
-                <option value="25">25 / page</option>
-                <option value="50">50 / page</option>
-                <option value="100">100 / page</option>
-                <option value="250">250 / page</option>
-                <option value="500">500 / page</option>
-                <option value="1000">1000 / page</option>
-                <option value="all">All (unpaged)</option>
-              </select>
+                menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
+              />
             </label>
             <button type="submit" className="btn primary" disabled={loadingPage}>
               <Ic.search className="ic" /> Apply
@@ -863,20 +898,18 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
               </label>
               <label className="f">
                 Sort Order
-                <select
-                  value={sort}
-                  onChange={(e) => {
-                    setSort(e.target.value);
-                    loadPage(0, size, e.target.value, filters);
+                <Select
+                  styles={coolSelectStyles}
+                  isSearchable={false}
+                  options={SORT_OPTIONS}
+                  value={SORT_OPTIONS.find((o) => o.value === sort) || SORT_OPTIONS[0]}
+                  onChange={(opt) => {
+                    const nextSort = opt ? opt.value : 'createdAt,desc';
+                    setSort(nextSort);
+                    loadPage(0, size, nextSort, filters);
                   }}
-                >
-                  <option value="createdAt,desc">Newest uploaded (createdAt,desc)</option>
-                  <option value="createdAt,asc">Oldest uploaded (createdAt,asc)</option>
-                  <option value="id,desc">Scan ID descending (id,desc)</option>
-                  <option value="id,asc">Scan ID ascending (id,asc)</option>
-                  <option value="invoiceDate,desc">Invoice date desc</option>
-                  <option value="invoiceNo,asc">Invoice No. asc</option>
-                </select>
+                  menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
+                />
               </label>
               <div className="row" style={{ alignSelf: 'end' }}>
                 <button type="button" className="btn sm" onClick={clearFilters}>
@@ -1136,20 +1169,35 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                 : `Export Filtered Excel (${pageData.totalElements.toLocaleString()})`}
             </button>
 
-            <div className="selbox">
-              POST Mode:
-              <select
-                value={updateMode}
-                onChange={(e) => {
-                  setUpdateMode(e.target.value);
-                  saveServerViewConfig({ updateMode: e.target.value });
-                }}
-                disabled={running}
-              >
-                <option value="single">Single (POST /v1/&#123;scanId&#125;/scan)</option>
-                <option value="batch">Batch (POST /v1/list/scans)</option>
-                <option value="both">Both (Single + Batch)</option>
-              </select>
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                background: '#f8fafc',
+                border: '1px solid var(--line, #e2e8f0)',
+                borderRadius: 10,
+                padding: '2px 8px 2px 12px',
+                fontSize: 12.5,
+                fontWeight: 600,
+              }}
+            >
+              <span style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>POST Mode:</span>
+              <div style={{ minWidth: 230 }}>
+                <Select
+                  styles={coolSelectStyles}
+                  isSearchable={false}
+                  isDisabled={running}
+                  options={POST_MODE_OPTIONS}
+                  value={POST_MODE_OPTIONS.find((o) => o.value === updateMode) || POST_MODE_OPTIONS[0]}
+                  onChange={(opt) => {
+                    const val = opt ? opt.value : 'single';
+                    setUpdateMode(val);
+                    saveServerViewConfig({ updateMode: val });
+                  }}
+                  menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
+                />
+              </div>
             </div>
 
             <label

@@ -1,9 +1,11 @@
 import React, { useState, useRef } from 'react';
+import Select from 'react-select';
 import { put, getSettings } from '../lib/db.js';
 import { extractWithAI } from '../lib/ai.js';
 import { updateSingleScanV1 } from '../lib/scanApi.js';
 import { compressImage, parseScanId, uid, num } from '../lib/util.js';
 import { Ic } from './icons.jsx';
+import { coolSelectStyles } from './coolSelectTheme.js';
 
 const FIELDS = [
   ["no","Document No.","printed Doc No."],
@@ -20,6 +22,10 @@ const FIELDS = [
   ["scanId","Scan ID","from filename"],
 ];
 const DOC_TYPES = ["GOODS_TRANSFER_NOTE","DELIVERY_ORDER","Invoice","Tax Invoice","Purchase Order","Receipt","Other"];
+const DOC_TYPE_OPTIONS = [
+  { value: '', label: '— Select Document Type —' },
+  ...DOC_TYPES.map((t) => ({ value: t, label: t })),
+];
 const EXTRA_FIELDS = ["formNo","company","dealerName","dealerAddress","fromLocation","toLocation"];
 
 const emptyItem = ()=>({ productCode:"", description:"", unit:"", orderedQuantity:"", deliveredQuantity:"", quantity:"", notes:"" });
@@ -195,10 +201,14 @@ export default function CaptureView({ toast, openSettings, onSaved, editRecord, 
               </label>
             ))}
             <label className="f">Document Type
-              <select value={fields.documentType||""} onChange={e=>setF("documentType",e.target.value)}>
-                <option value="">—</option>
-                {DOC_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
-              </select>
+              <Select
+                styles={coolSelectStyles}
+                isSearchable={false}
+                options={DOC_TYPE_OPTIONS}
+                value={DOC_TYPE_OPTIONS.find((o) => o.value === (fields.documentType || '')) || DOC_TYPE_OPTIONS[0]}
+                onChange={(opt) => setF('documentType', opt ? opt.value : '')}
+                menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
+              />
             </label>
             <label className="f">Verification Notes
               <input className="full" value={fields.verificationNotes||""}
