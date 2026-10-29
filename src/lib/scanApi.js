@@ -666,8 +666,13 @@ export async function analyzeAndSyncScansPages({
   sort = 'createdAt,desc',
   filters = {},
   updateMode,
+  getUpdateMode,
+  batchConcurrency = 3,
+  getBatchConcurrency,
   autoNextPage,
+  getAutoNextPage,
   skipApproved,
+  getSkipApproved,
   targetMode = 'pending_and_empty', // 'pending_and_empty' | 'pending_only' | 'empty_items_only' | 'all'
   reanalyzeEmptyItems = true,
   continuousLoop = false,
@@ -682,10 +687,43 @@ export async function analyzeAndSyncScansPages({
   onLoopPassComplete = () => {},
 } = {}) {
   const cfg = getScanApiConfig(configOverrides);
-  const effectiveMode = updateMode || cfg.v1UpdateMode || 'single';
+
+  const getCurrentMode = () => {
+    let m = null;
+    if (typeof getUpdateMode === 'function') {
+      try { m = getUpdateMode(); } catch (_) {}
+    }
+    return m || updateMode || cfg.v1UpdateMode || 'single';
+  };
+
+  const getConcurrency = () => {
+    let c = null;
+    if (typeof getBatchConcurrency === 'function') {
+      try { c = getBatchConcurrency(); } catch (_) {}
+    }
+    const val = Number(c ?? batchConcurrency) || 3;
+    const mode = getCurrentMode();
+    // For single mode: sequential (1); for batch/both: concurrent parallel AI analysis (default 3)
+    return mode === 'single' ? 1 : Math.max(1, Math.min(5, val));
+  };
+
+  const getEffectiveAutoNext = () => {
+    let a = undefined;
+    if (typeof getAutoNextPage === 'function') {
+      try { a = getAutoNextPage(); } catch (_) {}
+    }
+    return a !== undefined ? !!a : (autoNextPage !== undefined ? !!autoNextPage : cfg.v1AutoNextPage);
+  };
+
+  const getEffectiveSkipApproved = () => {
+    let s = undefined;
+    if (typeof getSkipApproved === 'function') {
+      try { s = getSkipApproved(); } catch (_) {}
+    }
+    return s !== undefined ? !!s : (skipApproved !== undefined ? !!skipApproved : cfg.v1SkipApproved);
+  };
+
   const effectiveSize = size != null ? String(size) : cfg.v1PageSize;
-  const effectiveAutoNext = autoNextPage !== undefined ? !!autoNextPage : cfg.v1AutoNextPage;
-  const effectiveSkipApproved = skipApproved !== undefined ? !!skipApproved : cfg.v1SkipApproved;
   const filterSet = onlyScanIds ? new Set(onlyScanIds.map((x) => String(x))) : null;
 
   let currentPage = Math.max(0, Number(startPage) || 0);
@@ -738,7 +776,7 @@ export async function analyzeAndSyncScansPages({
       }
 
       // 2. Scan is APPROVED
-      if (targetMode === 'pending_only' || (effectiveSkipApproved && !reanalyzeEmptyItems)) {
+      if (targetMode === 'pending_only' || (getEffectiveSkipApproved() && !reanalyzeEmptyItems)) {
         skippedOnPage.push(scan);
         continue;
       }
@@ -794,55 +832,157 @@ export async function analyzeAndSyncScansPages({
     let pageSuccessCount = 0;
     let pageFailCount = 0;
 
-    for (let i = 0; i < candidates.length; i++) {
-      if (shouldStop()) break;
-      const scan = candidates[i];
+    async function flushBatch() {
+      if (pagePayloads.length === 0) return;
+      const toSend = [...pagePayloads];
+      pagePayloads.length = 0;
+
+      onScanProgress({
+        scanId: null,
+        page: currentPage,
+        stage: 'batch_posting',
+        message: `Batch updating ${toSend.length} scan(s) via POST ${cfg.v1ListScansPath}…`,
+      });
+
+      try {
+        const batchResponse = await batchUpdateScansV1(toSend, { configOverrides });
+        totalUpdated += toSend.length;
+        const updatedList = batchResponse?.content || batchResponse?.scans || [];
+        const updatedMap = new Map();
+        updatedList.forEach((u) => {
+          if (u.id != null) updatedMap.set(String(u.id), u);
+        });
+
+        toSend.forEach((p) => {
+          const scanId = p.id || p.scanId;
+          const u = updatedMap.get(String(scanId)) || p;
+          onScanProgress({
+            scanId,
+            scan: {
+              ...u,
+              id: scanId,
+              scanId,
+              reviewStatus: 'APPROVED',
+              status: 'COMPLETED',
+            },
+            page: currentPage,
+            stage: 'updated',
+            itemsCount: Array.isArray(u.items) ? u.items.length : p.items?.length,
+            invoiceNo: u.invoiceNo || p.invoiceNo,
+            message: `Batch saved (APPROVED, ${p.items?.length || 0} items) ✓`,
+          });
+        });
+      } catch (err) {
+        console.warn(`Batch POST failed (${err.message}). Falling back to per-scan updates…`);
+        for (const p of toSend) {
+          const scanId = p.id || p.scanId;
+          try {
+            const single = await updateSingleScanV1(scanId, p, { configOverrides });
+            totalUpdated++;
+            onScanProgress({
+              scanId,
+              scan: {
+                ...single,
+                id: scanId,
+                scanId,
+                reviewStatus: 'APPROVED',
+                status: 'COMPLETED',
+              },
+              page: currentPage,
+              stage: 'updated',
+              itemsCount: Array.isArray(single.items) ? single.items.length : p.items?.length,
+              invoiceNo: single.invoiceNo || p.invoiceNo,
+              message: `Saved via per-scan fallback (APPROVED, ${p.items?.length || 0} items) ✓`,
+            });
+          } catch (singleErr) {
+            totalFailed++;
+            onScanProgress({
+              scanId,
+              page: currentPage,
+              stage: 'error',
+              error: singleErr.message,
+              message: `Update failed: ${singleErr.message}`,
+            });
+          }
+        }
+      }
+    }
+
+    async function processCandidate(scan, indexOnPage) {
+      if (shouldStop()) return;
       processedScanIds.add(String(scan.id));
       const t0 = performance.now();
+
+      const activeMode = getCurrentMode();
+      const isBatch = activeMode === 'batch';
+      const postSingleNow = activeMode === 'single' || activeMode === 'both';
 
       onScanProgress({
         scanId: scan.id,
         scan,
         page: currentPage,
-        indexOnPage: i,
+        indexOnPage,
         totalOnPage: candidates.length,
         stage: 'analyzing',
-        message: 'Fetching imageUrl & analyzing with AI…',
+        message: isBatch ? 'Fast parallel AI extracting…' : 'Analyzing imageUrl with AI…',
       });
 
       try {
-        const postSingleNow = effectiveMode === 'single' || effectiveMode === 'both';
         const result = await analyzeOneServerScan(scan, {
           postImmediately: postSingleNow,
           configOverrides,
         });
 
-        pagePayloads.push(result.payload);
         totalAnalyzed++;
         pageSuccessCount++;
+        const elapsedMs = Math.round(performance.now() - t0);
+
         if (postSingleNow) {
           totalUpdated++;
+          onScanProgress({
+            scanId: scan.id,
+            scan: result.updatedScan || {
+              ...scan,
+              ...result.payload,
+              reviewStatus: 'APPROVED',
+              status: 'COMPLETED',
+            },
+            page: currentPage,
+            indexOnPage,
+            totalOnPage: candidates.length,
+            stage: 'updated',
+            itemsCount: result.payload.items.length,
+            invoiceNo: result.payload.invoiceNo,
+            ms: elapsedMs,
+            message: `Approved & saved (${result.payload.items.length} items) ✓`,
+          });
         }
 
-        const elapsedMs = Math.round(performance.now() - t0);
-        onScanProgress({
-          scanId: scan.id,
-          scan: result.updatedScan || {
-            ...scan,
-            ...result.payload,
-            reviewStatus: 'APPROVED',
-          },
-          page: currentPage,
-          indexOnPage: i,
-          totalOnPage: candidates.length,
-          stage: postSingleNow ? 'updated' : 'analyzed',
-          itemsCount: result.payload.items.length,
-          invoiceNo: result.payload.invoiceNo,
-          ms: elapsedMs,
-          message: postSingleNow
-            ? `Approved & saved (${result.payload.items.length} items)`
-            : `Analyzed (${result.payload.items.length} items) — pending batch POST`,
-        });
+        if (isBatch || activeMode === 'both') {
+          pagePayloads.push(result.payload);
+          if (!postSingleNow) {
+            onScanProgress({
+              scanId: scan.id,
+              scan: {
+                ...scan,
+                ...result.payload,
+              },
+              page: currentPage,
+              indexOnPage,
+              totalOnPage: candidates.length,
+              stage: 'analyzed',
+              itemsCount: result.payload.items.length,
+              invoiceNo: result.payload.invoiceNo,
+              ms: elapsedMs,
+              message: `Analyzed (${result.payload.items.length} items) — Queued for batch POST`,
+            });
+          }
+
+          // In batch mode, flush in progressive chunks of 10 scans so work is committed steadily
+          if (pagePayloads.length >= 10 && !postSingleNow) {
+            await flushBatch();
+          }
+        }
       } catch (err) {
         totalFailed++;
         pageFailCount++;
@@ -850,7 +990,7 @@ export async function analyzeAndSyncScansPages({
           scanId: scan.id,
           scan,
           page: currentPage,
-          indexOnPage: i,
+          indexOnPage,
           totalOnPage: candidates.length,
           stage: 'error',
           error: err.message || 'Analysis failed',
@@ -860,40 +1000,34 @@ export async function analyzeAndSyncScansPages({
           throw err;
         }
         if (continuousLoop && !shouldStop()) {
-          // In 24/7 Overtime mode, back off gracefully on network/rate-limit hiccup and continue
-          await new Promise((r) => setTimeout(r, 8000));
+          await new Promise((r) => setTimeout(r, 6000));
         }
       }
     }
 
-    if (shouldStop()) break;
+    let candIdx = 0;
+    const activePromises = new Set();
 
-    // If batch mode (or 'both') is active and we have analyzed payloads on this page, POST /v1/list/scans
-    let batchResponse = null;
-    if ((effectiveMode === 'batch' || effectiveMode === 'both') && pagePayloads.length > 0) {
-      onScanProgress({
-        scanId: null,
-        page: currentPage,
-        stage: 'batch_posting',
-        message: `Batch updating ${pagePayloads.length} scan(s) via POST ${cfg.v1ListScansPath}…`,
-      });
-      batchResponse = await batchUpdateScansV1(pagePayloads, { configOverrides });
-      if (effectiveMode === 'batch') {
-        totalUpdated += pagePayloads.length;
+    while (candIdx < candidates.length || activePromises.size > 0) {
+      if (shouldStop() && activePromises.size === 0) break;
+
+      const concurrency = getConcurrency();
+      while (!shouldStop() && candIdx < candidates.length && activePromises.size < concurrency) {
+        const curIdx = candIdx++;
+        const candidateScan = candidates[curIdx];
+        const p = Promise.resolve().then(() => processCandidate(candidateScan, curIdx));
+        activePromises.add(p);
+        const done = () => activePromises.delete(p);
+        p.then(done, done);
       }
-      const updatedList = batchResponse?.content || batchResponse?.scans || [];
-      updatedList.forEach((u) => {
-        onScanProgress({
-          scanId: u.id,
-          scan: u,
-          page: currentPage,
-          stage: 'updated',
-          itemsCount: Array.isArray(u.items) ? u.items.length : undefined,
-          invoiceNo: u.invoiceNo,
-          message: 'Batch updated (APPROVED)',
-        });
-      });
+
+      if (activePromises.size > 0) {
+        await Promise.race(activePromises);
+      }
     }
+
+    // Always flush any remaining batch payloads on this page (even if paused/stopped!)
+    await flushBatch();
 
     pagesProcessed++;
     onPageSynced({
@@ -905,7 +1039,6 @@ export async function analyzeAndSyncScansPages({
       totalUpdated,
       totalFailed,
       totalSkipped: skippedOnPage.length,
-      batchResponse,
     });
 
     // Stop if user only requested specific scan IDs on current page
@@ -914,7 +1047,7 @@ export async function analyzeAndSyncScansPages({
     }
 
     // If autoNextPage is off and not in continuousLoop, stop
-    if (!effectiveAutoNext && !continuousLoop) {
+    if (!getEffectiveAutoNext() && !continuousLoop) {
       break;
     }
 

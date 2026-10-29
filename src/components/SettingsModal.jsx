@@ -8,8 +8,8 @@ import { fetchAIModels } from '../lib/ai.js';
 import { coolSelectStyles } from './coolSelectTheme.js';
 
 const UPDATE_MODE_OPTIONS = [
-  { value: 'single', label: 'Single Update (POST /v1/{scanId}/scan per scan)' },
-  { value: 'batch', label: 'Batch Update (POST /v1/list/scans per page)' },
+  { value: 'single', label: 'Single Update (POST /v1/{scanId}/scan immediately per scan)' },
+  { value: 'batch', label: '⚡ Batch Update (3x Faster Parallel AI · POST /v1/list/scans)' },
   { value: 'both', label: 'Both (Single immediately + Batch page confirm)' },
 ];
 

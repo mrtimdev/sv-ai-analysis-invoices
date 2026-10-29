@@ -22,6 +22,7 @@ import {
   pauseServerScanJob,
   stopServerScanJob,
   saveServerViewConfig,
+  setServerJobUpdateMode,
   clearServerJobHistory,
 } from '../lib/jobManager.js';
 import { fmtEta } from '../lib/util.js';
@@ -63,9 +64,9 @@ const SORT_OPTIONS = [
 ];
 
 const POST_MODE_OPTIONS = [
-  { value: 'single', label: 'Single (POST /v1/{scanId}/scan)' },
-  { value: 'batch', label: 'Batch (POST /v1/list/scans)' },
-  { value: 'both', label: 'Both (Single + Batch)' },
+  { value: 'single', label: 'Single (POST /v1/{scanId}/scan immediately)' },
+  { value: 'batch', label: '⚡ Batch (3x Faster Parallel · POST /v1/list/scans)' },
+  { value: 'both', label: 'Both (Single immediately + Batch confirm)' },
 ];
 
 function buildPageNumbers(currentZeroBased, totalPages) {
@@ -714,6 +715,20 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                     Scan #{activeScan.id}
                   </span>
                 )}
+                <span
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 700,
+                    padding: '1px 7px',
+                    borderRadius: 6,
+                    background: updateMode === 'batch' ? 'rgba(56, 189, 248, 0.2)' : 'rgba(255, 255, 255, 0.1)',
+                    color: updateMode === 'batch' ? '#38bdf8' : '#e2e8f0',
+                    border: '1px solid ' + (updateMode === 'batch' ? '#38bdf8' : 'rgba(255, 255, 255, 0.2)'),
+                  }}
+                  title="Switch POST Mode anytime via the dropdown below"
+                >
+                  {updateMode === 'batch' ? '⚡ BATCH (3X PARALLEL)' : updateMode === 'both' ? 'BOTH (SINGLE+BATCH)' : 'SINGLE POST'}
+                </span>
                 {etaMs && running && remainingOnPage > 0 && (
                   <span style={{ fontSize: 11.5, color: '#94a3b8' }}>
                     · {fmtEta(etaMs * remainingOnPage)} on this page (~{(etaMs / 1000).toFixed(1)}s/scan)
@@ -1266,7 +1281,9 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                     ? 'Resume 24/7 Overtime Loop'
                     : 'Resume AI Page Sync'
                   : continuousLoop
-                  ? `Start 24/7 Overtime Loop (${targetMode === 'pending_only' ? 'Pending' : 'Pending + 0-Item'})`
+                  ? `Start 24/7 Overtime Loop (${updateMode === 'batch' ? '⚡ 3x Batch' : 'Single'} · ${targetMode === 'pending_only' ? 'Pending' : 'Pending + 0-Item'})`
+                  : updateMode === 'batch'
+                  ? `⚡ Analyze in Batch (${pendingOnPage || pageData.content.length} scans · 3x Faster AI)`
                   : skipApproved
                   ? `Analyze Pending (${pendingOnPage}/${pageData.content.length})${autoNextPage ? ' · Auto-Next' : ''}`
                   : `Analyze Page & Update Backend${autoNextPage ? ' (Auto-Next Page)' : ''}`}
@@ -1365,26 +1382,38 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 8,
-                background: '#f8fafc',
-                border: '1px solid var(--line, #e2e8f0)',
+                background: updateMode === 'batch' ? '#f0f9ff' : '#f8fafc',
+                border: updateMode === 'batch' ? '1px solid #38bdf8' : '1px solid var(--line, #e2e8f0)',
                 borderRadius: 10,
                 padding: '2px 8px 2px 12px',
                 fontSize: 12.5,
                 fontWeight: 600,
               }}
             >
-              <span style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>POST Mode:</span>
-              <div style={{ minWidth: 230 }}>
+              <span
+                style={{
+                  color: updateMode === 'batch' ? '#0284c7' : 'var(--muted)',
+                  whiteSpace: 'nowrap',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                }}
+              >
+                {updateMode === 'batch' && <span>⚡</span>} POST Mode:
+              </span>
+              <div style={{ minWidth: 260 }}>
                 <Select
                   styles={coolSelectStyles}
                   isSearchable={false}
-                  isDisabled={running}
                   options={POST_MODE_OPTIONS}
                   value={POST_MODE_OPTIONS.find((o) => o.value === updateMode) || POST_MODE_OPTIONS[0]}
                   onChange={(opt) => {
                     const val = opt ? opt.value : 'single';
                     setUpdateMode(val);
+                    setServerJobUpdateMode(val);
                     saveServerViewConfig({ updateMode: val });
+                    saveSettings({ v1UpdateMode: val });
+                    toast(`POST Mode switched to ${val.toUpperCase()} — active immediately`);
                   }}
                   menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
                 />
@@ -1417,8 +1446,8 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                   setContinuousLoop(val);
                   saveServerViewConfig({ continuousLoop: val });
                   saveSettings({ v1ContinuousLoop: val });
+                  toast(`24/7 Overtime Loop ${val ? 'enabled' : 'disabled'}`);
                 }}
-                disabled={running}
               />
               <span>24/7 Overtime Loop</span>
             </label>
@@ -1444,8 +1473,8 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                   setReanalyzeEmptyItems(val);
                   saveServerViewConfig({ reanalyzeEmptyItems: val });
                   saveSettings({ v1ReanalyzeEmptyItems: val });
+                  toast(`Include 0-item scans ${val ? 'enabled' : 'disabled'}`);
                 }}
-                disabled={running}
               />
               <span>Include 0-item scans</span>
             </label>
@@ -1470,8 +1499,8 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                   setAutoNextPage(val);
                   saveServerViewConfig({ autoNextPage: val });
                   saveSettings({ v1AutoNextPage: val });
+                  toast(`Auto next page ${val ? 'enabled' : 'disabled'}`);
                 }}
-                disabled={running}
               />
               Auto next page
             </label>
@@ -1496,8 +1525,8 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                   setSkipApproved(val);
                   saveServerViewConfig({ skipApproved: val });
                   saveSettings({ v1SkipApproved: val });
+                  toast(`Skip APPROVED ${val ? 'enabled' : 'disabled'}`);
                 }}
-                disabled={running}
               />
               <span>Skip APPROVED</span>
               {approvedOnPage > 0 && (
@@ -1708,9 +1737,25 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                         </td>
                         <td>
                           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                            <span className={'badge ' + (isApproved ? 'ok' : 'pend')}>
-                              <span className="dot" /> {scan.reviewStatus || (isApproved ? 'APPROVED' : 'PENDING')}
-                            </span>
+                            {st?.stage === 'analyzed' ? (
+                              <span
+                                className="badge"
+                                style={{
+                                  background: '#e0e7ff',
+                                  color: '#3730a3',
+                                  border: '1px solid #c7d2fe',
+                                  fontSize: 10.5,
+                                  fontWeight: 700,
+                                }}
+                                title="Analyzed with AI & items extracted, queued for batch POST /v1/list/scans"
+                              >
+                                <span className="dot" style={{ background: '#4f46e5' }} /> QUEUED BATCH
+                              </span>
+                            ) : (
+                              <span className={'badge ' + (isApproved ? 'ok' : 'pend')}>
+                                <span className="dot" /> {scan.reviewStatus || (isApproved ? 'APPROVED' : 'PENDING')}
+                              </span>
+                            )}
                             {skipApproved && isApproved && (
                               <span
                                 style={{

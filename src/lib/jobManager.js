@@ -194,6 +194,26 @@ export async function saveServerViewConfig(partial = {}) {
 }
 
 /**
+ * Dynamically switches POST mode ('single' | 'batch' | 'both') while a job is running or idle.
+ */
+export async function setServerJobUpdateMode(mode) {
+  if (!mode) return;
+  serverJobState.updateMode = mode;
+  await persistServerJobState({ updateMode: mode });
+  emitChange();
+}
+
+/**
+ * Dynamically updates batch concurrency (e.g. 1 to 5 concurrent AI analyses).
+ */
+export async function setServerJobBatchConcurrency(concurrency) {
+  const c = Math.max(1, Math.min(5, Number(concurrency) || 3));
+  serverJobState.batchConcurrency = c;
+  await persistServerJobState({ batchConcurrency: c });
+  emitChange();
+}
+
+/**
  * Starts or resumes the Server Scans (/v1) AI Analyze & Sync job in the background.
  */
 export async function startServerScanJob({
@@ -302,6 +322,9 @@ export async function startServerScanJob({
 
   await acquireWakeLock();
 
+  const sessionAnalyzedIds = new Set();
+  const sessionUpdatedIds = new Set();
+
   try {
     const summary = await analyzeAndSyncScansPages({
       startPage,
@@ -309,8 +332,13 @@ export async function startServerScanJob({
       sort: effectiveSort,
       filters: effectiveFilters,
       updateMode: effectiveUpdateMode,
+      getUpdateMode: () => serverJobState.updateMode,
+      batchConcurrency: serverJobState.batchConcurrency || 3,
+      getBatchConcurrency: () => serverJobState.batchConcurrency || 3,
       autoNextPage: onlyScanIds ? false : effectiveAutoNext,
+      getAutoNextPage: () => (onlyScanIds ? false : serverJobState.autoNextPage),
       skipApproved: effectiveSkipApproved,
+      getSkipApproved: () => serverJobState.skipApproved,
       targetMode: effectiveTargetMode,
       reanalyzeEmptyItems: effectiveReanalyzeEmptyItems,
       continuousLoop: effectiveContinuousLoop,
@@ -375,6 +403,7 @@ export async function startServerScanJob({
                     ...evt.scan,
                     imageUrl: resolveScanImageUrl(evt.scan || row),
                     invoiceNo: evt.invoiceNo || evt.scan.invoiceNo || row.invoiceNo,
+                    dealerCode: evt.scan?.dealerCode || row.dealerCode,
                     reviewStatus: evt.stage === 'updated' ? 'APPROVED' : row.reviewStatus,
                     status: evt.stage === 'updated' ? 'COMPLETED' : row.status,
                   }
@@ -398,13 +427,23 @@ export async function startServerScanJob({
           totalOnPage: evt.totalOnPage ?? serverJobState.stats.totalOnPage,
           bannerMsg: evt.message || serverJobState.stats.bannerMsg,
         };
-        if (evt.stage === 'updated') {
-          nextStats.analyzed = (serverJobState.stats.analyzed || 0) + 1;
-          nextStats.updated = (serverJobState.stats.updated || 0) + 1;
-        } else if (evt.stage === 'analyzed') {
-          nextStats.analyzed = (serverJobState.stats.analyzed || 0) + 1;
-        } else if (evt.stage === 'error') {
-          nextStats.failed = (serverJobState.stats.failed || 0) + 1;
+
+        if (evt.scanId != null) {
+          const sId = String(evt.scanId);
+          if (evt.stage === 'analyzed' || evt.stage === 'updated') {
+            if (!sessionAnalyzedIds.has(sId)) {
+              sessionAnalyzedIds.add(sId);
+              nextStats.analyzed = (serverJobState.stats.analyzed || 0) + 1;
+            }
+          }
+          if (evt.stage === 'updated') {
+            if (!sessionUpdatedIds.has(sId)) {
+              sessionUpdatedIds.add(sId);
+              nextStats.updated = (serverJobState.stats.updated || 0) + 1;
+            }
+          } else if (evt.stage === 'error') {
+            nextStats.failed = (serverJobState.stats.failed || 0) + 1;
+          }
         } else if (evt.stage === 'skipped') {
           nextStats.skipped = (serverJobState.stats.skipped || 0) + (evt.count || 1);
         }
