@@ -173,8 +173,16 @@ function pushActivityEvent(evt) {
 /**
  * Updates UI filter/pagination configuration in the persistent server job state
  * so even when the user refreshes the page while idle, their filters & page are preserved.
+ * If a job is actively running, we avoid mutating the active job's processing page.
  */
 export async function saveServerViewConfig(partial = {}) {
+  if (serverJobState.running) {
+    const { page, ...rest } = partial;
+    if (Object.keys(rest).length > 0) {
+      await persistServerJobState(rest);
+    }
+    return;
+  }
   await persistServerJobState(partial);
 }
 

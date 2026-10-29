@@ -166,6 +166,13 @@ label.f input.full{grid-column:1/-1}
 .pg.active{background:var(--grad);border-color:transparent;color:#fff;box-shadow:0 6px 14px rgba(79,70,229,.35)}
 .pg.disabled{opacity:.4;cursor:default}
 .pg.ellipsis{border:none;background:none;cursor:default;color:var(--muted);min-width:22px}
+.pg.job-active:not(.active){border-color:#818cf8;background:#eef2ff;color:#4338ca;position:relative}
+.pg.job-active:not(.active)::after{content:'';position:absolute;top:4px;right:4px;width:6px;height:6px;border-radius:50%;background:#4f46e5;box-shadow:0 0 6px rgba(79,70,229,.7);animation:pulseDot 1.4s infinite}
+@keyframes pulseDot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(1.4)}}
+
+.v1-page-diverged-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;padding:10px 14px;border-radius:10px;
+  font-size:12.5px;margin-bottom:12px;box-shadow:0 2px 6px rgba(30,64,175,.05);animation:fade .2s ease}
 
 /* ---- modal ---- */
 .mback{position:fixed;inset:0;background:rgba(10,15,30,.5);display:flex;align-items:flex-start;

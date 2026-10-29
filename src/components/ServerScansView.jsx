@@ -138,19 +138,51 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
 
   // Subscribe to the persistent background job manager so state stays live across tab switches & page refreshes
   const [jobSnap, setJobSnap] = useState(initialSnap);
+  const [isFollowingJob, setIsFollowingJob] = useState(true);
+  const isFollowingJobRef = useRef(true);
+  const pageRef = useRef(initialSnap.page || 0);
+  const jobSnapRef = useRef(initialSnap);
+  const loadReqIdRef = useRef(0);
+
+  useEffect(() => {
+    pageRef.current = page;
+  }, [page]);
+
+  useEffect(() => {
+    isFollowingJobRef.current = isFollowingJob;
+  }, [isFollowingJob]);
 
   useEffect(() => {
     return subscribeJobManager((snap) => {
-      setJobSnap(snap.serverJob);
-      if (snap.serverJob.lastPageData) {
-        setPageData(snap.serverJob.lastPageData);
-        setPage(snap.serverJob.page || 0);
+      const sj = snap.serverJob;
+      jobSnapRef.current = sj;
+      setJobSnap(sj);
+
+      if (sj.skipApproved !== undefined) {
+        setSkipApproved(sj.skipApproved);
       }
-      if (snap.serverJob.skipApproved !== undefined) {
-        setSkipApproved(snap.serverJob.skipApproved);
+      if (sj.autoNextPage !== undefined) {
+        setAutoNextPage(sj.autoNextPage);
       }
-      if (snap.serverJob.autoNextPage !== undefined) {
-        setAutoNextPage(snap.serverJob.autoNextPage);
+
+      if (sj.running) {
+        const jobPage = sj.page ?? 0;
+        if (isFollowingJobRef.current) {
+          // Following the active job: advance/sync page alongside the job
+          if (pageRef.current !== jobPage) {
+            pageRef.current = jobPage;
+            setPage(jobPage);
+          }
+          if (sj.lastPageData && sj.lastPageData.number === jobPage) {
+            setPageData(sj.lastPageData);
+          }
+        } else {
+          // User is inspecting a different page. Keep their view decoupled.
+          // If the user navigated to the page the job is currently on, reflect live scan statuses:
+          if (pageRef.current === jobPage && sj.lastPageData && sj.lastPageData.number === jobPage) {
+            setPageData(sj.lastPageData);
+          }
+        }
       }
     });
   }, []);
@@ -173,6 +205,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
 
   const loadPage = useCallback(
     async (targetPage = page, targetSize = size, targetSort = sort, targetFilters = filters) => {
+      const reqId = ++loadReqIdRef.current;
       setLoadingPage(true);
       setPageError(null);
       try {
@@ -182,8 +215,10 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
           sort: targetSort,
           filters: targetFilters,
         });
+        if (reqId !== loadReqIdRef.current) return null;
         setPageData(res);
         setPage(res.number);
+        pageRef.current = res.number;
         saveServerViewConfig({
           page: res.number,
           size: targetSize,
@@ -192,10 +227,14 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
         });
         return res;
       } catch (err) {
-        setPageError(err.message || 'Could not load scans from /v1/list/scans');
+        if (reqId === loadReqIdRef.current) {
+          setPageError(err.message || 'Could not load scans from /v1/list/scans');
+        }
         return null;
       } finally {
-        setLoadingPage(false);
+        if (reqId === loadReqIdRef.current) {
+          setLoadingPage(false);
+        }
       }
     },
     [page, size, sort, filters]
@@ -249,6 +288,20 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
   const goToPage = (nextPageZeroBased) => {
     const clamped = Math.max(0, Math.min(nextPageZeroBased, Math.max(0, pageData.totalPages - 1)));
     setSelectedIds(new Set());
+
+    const isRunning = jobSnapRef.current?.running;
+    const jobPage = jobSnapRef.current?.page ?? 0;
+
+    if (isRunning) {
+      if (clamped === jobPage) {
+        setIsFollowingJob(true);
+        isFollowingJobRef.current = true;
+      } else {
+        setIsFollowingJob(false);
+        isFollowingJobRef.current = false;
+      }
+    }
+
     loadPage(clamped, size, sort, filters);
   };
 
@@ -404,6 +457,8 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
         return;
       }
     }
+    setIsFollowingJob(true);
+    isFollowingJobRef.current = true;
     await startServerScanJob({
       page,
       size,
@@ -1364,6 +1419,41 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
             </div>
           )}
 
+          {/* Decoupled Page Indicator: Shown when user browses a different page while AI is analyzing in background */}
+          {running && page !== (jobSnap.page ?? 0) && (
+            <div className="v1-page-diverged-bar">
+              <div className="row" style={{ gap: 9 }}>
+                <span
+                  className="pulse"
+                  style={{
+                    width: 12,
+                    height: 12,
+                    borderWidth: 2,
+                    borderColor: '#3b82f6',
+                    borderTopColor: '#fff',
+                  }}
+                />
+                <div>
+                  <b>AI Job running on Page {(jobSnap.page ?? 0) + 1}:</b>{' '}
+                  <span>
+                    {jobSnap.activeScan?.invoiceNo
+                      ? `Analyzing scan #${jobSnap.activeScan.id} (${jobSnap.activeScan.invoiceNo})`
+                      : 'Processing scans in background…'}
+                    {' · '}You are currently viewing Page <b>{page + 1}</b>
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn xs primary"
+                onClick={() => goToPage(jobSnap.page ?? 0)}
+                style={{ whiteSpace: 'nowrap' }}
+              >
+                Jump to Job Page {(jobSnap.page ?? 0) + 1} &rarr;
+              </button>
+            </div>
+          )}
+
           {/* VIEW MODE A: Interactive Table */}
           {viewMode === 'table' ? (
             <div className="tblwrap" style={{ maxHeight: 620 }}>
@@ -1681,40 +1771,65 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
 
           {/* Pagination Bar */}
           {pageData.totalPages > 1 && (
-            <div className="pager">
-              <button
-                type="button"
-                className={'pg' + (pageData.first ? ' disabled' : '')}
-                disabled={pageData.first || loadingPage}
-                onClick={() => goToPage(pageData.number - 1)}
-              >
-                ‹ Prev
-              </button>
-              {buildPageNumbers(pageData.number, pageData.totalPages).map((p, idx) =>
-                p === '…' ? (
-                  <button key={'e' + idx} type="button" className="pg ellipsis" disabled>
-                    …
-                  </button>
-                ) : (
+            <div style={{ marginTop: 16 }}>
+              {running && page !== (jobSnap.page ?? 0) && (
+                <div className="v1-page-diverged-bar" style={{ marginBottom: 10, justifyContent: 'center' }}>
+                  <span>
+                    🤖 AI Job active on Page <b>{(jobSnap.page ?? 0) + 1}</b> · Currently viewing Page <b>{page + 1}</b>
+                  </span>
                   <button
-                    key={p}
                     type="button"
-                    className={'pg' + (p === pageData.number + 1 ? ' active' : '')}
-                    disabled={loadingPage}
-                    onClick={() => goToPage(p - 1)}
+                    className="btn xs primary"
+                    onClick={() => goToPage(jobSnap.page ?? 0)}
                   >
-                    {p}
+                    Jump to Job Page {(jobSnap.page ?? 0) + 1} &rarr;
                   </button>
-                )
+                </div>
               )}
-              <button
-                type="button"
-                className={'pg' + (pageData.last ? ' disabled' : '')}
-                disabled={pageData.last || loadingPage}
-                onClick={() => goToPage(pageData.number + 1)}
-              >
-                Next ›
-              </button>
+              <div className="pager" style={{ marginTop: 0 }}>
+                <button
+                  type="button"
+                  className={'pg' + (pageData.first ? ' disabled' : '')}
+                  disabled={pageData.first || loadingPage}
+                  onClick={() => goToPage(pageData.number - 1)}
+                >
+                  ‹ Prev
+                </button>
+                {buildPageNumbers(pageData.number, pageData.totalPages).map((p, idx) =>
+                  p === '…' ? (
+                    <button key={'e' + idx} type="button" className="pg ellipsis" disabled>
+                      …
+                    </button>
+                  ) : (
+                    <button
+                      key={p}
+                      type="button"
+                      className={
+                        'pg' +
+                        (p === pageData.number + 1 ? ' active' : '') +
+                        (running && p === (jobSnap.page ?? 0) + 1 && p !== pageData.number + 1 ? ' job-active' : '')
+                      }
+                      title={
+                        running && p === (jobSnap.page ?? 0) + 1
+                          ? `AI analyzing Page ${p} in background`
+                          : `Go to Page ${p}`
+                      }
+                      disabled={loadingPage}
+                      onClick={() => goToPage(p - 1)}
+                    >
+                      {p}
+                    </button>
+                  )
+                )}
+                <button
+                  type="button"
+                  className={'pg' + (pageData.last ? ' disabled' : '')}
+                  disabled={pageData.last || loadingPage}
+                  onClick={() => goToPage(pageData.number + 1)}
+                >
+                  Next ›
+                </button>
+              </div>
             </div>
           )}
         </div>
