@@ -175,10 +175,10 @@ export default function QueueView({ toast, openSettings, onRecordsChanged, openD
   };
 
   const exportXls = async () => {
-    const done = items.filter((q) => q.status === 'done' && q.recordId);
+    const done = items.filter((q) => q.status === 'done' && (q.record || q.recordId));
     const recs = [];
     for (const q of done) {
-      const r = await get('invoices', q.recordId);
+      const r = q.record || (q.recordId ? await get('invoices', q.recordId).catch(() => null) : null);
       if (r) recs.push(r);
     }
     const res = await exportExcel(recs);

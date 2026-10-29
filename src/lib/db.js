@@ -34,6 +34,10 @@ export const DEFAULT_AI_SETTINGS = {
   key: "sk-aab807185cc210e9-604bd1-ce13645d",
   model: "antigravity/gemini-3.8-flash-low",
   apiServerBase: "http://45.201.196.19:3002",
+  v1ContinuousLoop: false,
+  v1LoopInterval: 15,
+  v1ReanalyzeEmptyItems: true,
+  v1TargetMode: "pending_and_empty",
 };
 
 export function getSettings(){
@@ -49,6 +53,10 @@ export function getSettings(){
   const effectiveKey = (saved.key || env.VITE_AI_API_KEY || DEFAULT_AI_SETTINGS.key || "").trim();
   const effectiveModel = (saved.model || env.VITE_AI_MODEL || DEFAULT_AI_SETTINGS.model || "").trim();
   const effectiveApiServerBase = (saved.apiServerBase || env.VITE_API_SERVER_BASE || DEFAULT_AI_SETTINGS.apiServerBase || "").trim();
+  const effectiveContinuousLoop = saved.v1ContinuousLoop !== undefined ? !!saved.v1ContinuousLoop : DEFAULT_AI_SETTINGS.v1ContinuousLoop;
+  const effectiveLoopInterval = Number(saved.v1LoopInterval || DEFAULT_AI_SETTINGS.v1LoopInterval) || 15;
+  const effectiveReanalyzeEmptyItems = saved.v1ReanalyzeEmptyItems !== undefined ? !!saved.v1ReanalyzeEmptyItems : DEFAULT_AI_SETTINGS.v1ReanalyzeEmptyItems;
+  const effectiveTargetMode = saved.v1TargetMode || DEFAULT_AI_SETTINGS.v1TargetMode;
 
   return {
     ...saved,
@@ -56,6 +64,10 @@ export function getSettings(){
     key: effectiveKey,
     model: effectiveModel,
     apiServerBase: effectiveApiServerBase,
+    v1ContinuousLoop: effectiveContinuousLoop,
+    v1LoopInterval: effectiveLoopInterval,
+    v1ReanalyzeEmptyItems: effectiveReanalyzeEmptyItems,
+    v1TargetMode: effectiveTargetMode,
   };
 }
 export function saveSettings(s){ localStorage.setItem(SET_KEY, JSON.stringify(s)); }

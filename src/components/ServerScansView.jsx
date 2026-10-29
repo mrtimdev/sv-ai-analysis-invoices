@@ -12,6 +12,8 @@ import {
   resolveScanImageUrl,
   handleScanImageError,
   isScanApproved,
+  isScanPending,
+  isScanEmptyItems,
 } from '../lib/scanApi.js';
 import {
   getJobManagerSnapshot,
@@ -95,6 +97,20 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
   const [skipApproved, setSkipApproved] = useState(
     initialSnap.skipApproved !== undefined ? initialSnap.skipApproved : initCfg.v1SkipApproved
   );
+  const [continuousLoop, setContinuousLoop] = useState(
+    initialSnap.continuousLoop !== undefined ? initialSnap.continuousLoop : !!initCfg.v1ContinuousLoop
+  );
+  const [loopInterval, setLoopInterval] = useState(
+    initialSnap.loopInterval || initCfg.v1LoopInterval || 15
+  );
+  const [reanalyzeEmptyItems, setReanalyzeEmptyItems] = useState(
+    initialSnap.reanalyzeEmptyItems !== undefined
+      ? initialSnap.reanalyzeEmptyItems
+      : (initCfg.v1ReanalyzeEmptyItems !== undefined ? initCfg.v1ReanalyzeEmptyItems : true)
+  );
+  const [targetMode, setTargetMode] = useState(
+    initialSnap.targetMode || initCfg.v1TargetMode || 'pending_and_empty'
+  );
 
   // Filters matching /admin/scans and GET /v1/list/scans
   const [filters, setFilters] = useState(
@@ -163,6 +179,18 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
       }
       if (sj.autoNextPage !== undefined) {
         setAutoNextPage(sj.autoNextPage);
+      }
+      if (sj.continuousLoop !== undefined) {
+        setContinuousLoop(sj.continuousLoop);
+      }
+      if (sj.loopInterval !== undefined) {
+        setLoopInterval(sj.loopInterval);
+      }
+      if (sj.reanalyzeEmptyItems !== undefined) {
+        setReanalyzeEmptyItems(sj.reanalyzeEmptyItems);
+      }
+      if (sj.targetMode !== undefined) {
+        setTargetMode(sj.targetMode);
       }
 
       if (sj.running) {
@@ -447,11 +475,11 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
         return;
       }
     }
-    if (!selectedOnly && skipApproved && !autoNextPage) {
+    if (!selectedOnly && skipApproved && !autoNextPage && !continuousLoop) {
       const pendingScans = pageData.content.filter((r) => !isScanApproved(r, scanStatuses));
       if (pageData.content.length > 0 && pendingScans.length === 0) {
         toast(
-          `All ${pageData.content.length} scans on page ${page + 1} are already APPROVED. Enable "Auto next page" to scan and process subsequent pages, or uncheck "Skip APPROVED" to re-analyze.`,
+          `All ${pageData.content.length} scans on page ${page + 1} are already APPROVED. Enable "Auto next page" or "24/7 Overtime Loop" to scan subsequent pages, or uncheck "Skip APPROVED" to re-analyze.`,
           true
         );
         return;
@@ -465,8 +493,12 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
       sort,
       filters,
       updateMode,
-      autoNextPage,
+      autoNextPage: continuousLoop ? true : autoNextPage,
       skipApproved,
+      continuousLoop,
+      loopInterval,
+      reanalyzeEmptyItems,
+      targetMode,
       onlyScanIds: targetIds,
       isResume,
       onToast: toast,
@@ -647,11 +679,35 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span
-                  className={'badge ' + (running ? 'run' : paused ? 'short' : 'ok')}
-                  style={{ fontSize: 11 }}
+                  className={
+                    'badge ' +
+                    (jobSnap.waitingNextPass
+                      ? 'warn'
+                      : running
+                      ? 'run'
+                      : paused
+                      ? 'short'
+                      : 'ok')
+                  }
+                  style={
+                    jobSnap.waitingNextPass
+                      ? { fontSize: 11, background: '#f59e0b', color: '#111' }
+                      : { fontSize: 11 }
+                  }
                 >
-                  <span className="dot" />{' '}
-                  {running ? 'LIVE AI PIPELINE' : paused ? 'PAUSED (SAVED IN DB)' : 'SESSION LOG'}
+                  <span
+                    className="dot"
+                    style={jobSnap.waitingNextPass ? { background: '#78350f' } : {}}
+                  />{' '}
+                  {jobSnap.waitingNextPass
+                    ? `24/7 OVERTIME IDLE · NEXT POLL IN ${jobSnap.nextPassCountdown || 0}S`
+                    : running
+                    ? continuousLoop
+                      ? `24/7 OVERTIME RUNNER (PASS #${(jobSnap.passesCompleted || 0) + 1})`
+                      : 'LIVE AI PIPELINE'
+                    : paused
+                    ? 'PAUSED (SAVED IN DB)'
+                    : 'SESSION LOG'}
                 </span>
                 {activeScan?.id && (
                   <span className="mono" style={{ fontWeight: 800, color: '#a5b4fc' }}>
@@ -677,6 +733,12 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                   </span>
                 )}{' '}
                 · Pages synced: <b style={{ color: '#e2e8f0' }}>{runStats.pagesProcessed}</b>
+                {jobSnap.passesCompleted > 0 && (
+                  <span>
+                    {' '}
+                    · Overtime passes: <b style={{ color: '#38bdf8' }}>{jobSnap.passesCompleted}</b>
+                  </span>
+                )}
                 {runStats.failed > 0 && (
                   <span>
                     {' '}
@@ -1196,16 +1258,40 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                 className="btn primary"
                 onClick={() => handleStartBatch({ selectedOnly: false, isResume: paused })}
                 disabled={!pageData.content.length}
+                style={continuousLoop ? { background: 'linear-gradient(135deg, #0284c7, #2563eb)', borderColor: '#1d4ed8' } : {}}
               >
                 <Ic.play className="ic" />{' '}
                 {paused
-                  ? 'Resume AI Page Sync'
+                  ? continuousLoop
+                    ? 'Resume 24/7 Overtime Loop'
+                    : 'Resume AI Page Sync'
+                  : continuousLoop
+                  ? `Start 24/7 Overtime Loop (${targetMode === 'pending_only' ? 'Pending' : 'Pending + 0-Item'})`
                   : skipApproved
                   ? `Analyze Pending (${pendingOnPage}/${pageData.content.length})${autoNextPage ? ' · Auto-Next' : ''}`
                   : `Analyze Page & Update Backend${autoNextPage ? ' (Auto-Next Page)' : ''}`}
               </button>
             ) : (
               <React.Fragment>
+                {jobSnap.waitingNextPass && (
+                  <div
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '4px 12px',
+                      background: '#fffbeb',
+                      border: '1px solid #fde68a',
+                      borderRadius: 8,
+                      fontSize: 12.5,
+                      fontWeight: 700,
+                      color: '#b45309',
+                    }}
+                  >
+                    <span className="pulse" style={{ borderColor: '#b45309', width: 12, height: 12 }} />
+                    Idle pass countdown ({jobSnap.nextPassCountdown || 0}s)…
+                  </div>
+                )}
                 <button
                   type="button"
                   className="btn warn"
@@ -1218,7 +1304,7 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                   className="btn danger"
                   onClick={() => stopServerScanJob(toast)}
                 >
-                  <Ic.stop className="ic" /> Stop after current scan
+                  <Ic.stop className="ic" /> Stop Job
                 </button>
               </React.Fragment>
             )}
@@ -1304,6 +1390,65 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                 />
               </div>
             </div>
+
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 12.5,
+                fontWeight: 700,
+                cursor: 'pointer',
+                userSelect: 'none',
+                background: continuousLoop ? 'rgba(56, 189, 248, 0.12)' : 'transparent',
+                border: continuousLoop ? '1px solid #38bdf8' : '1px solid transparent',
+                borderRadius: 8,
+                padding: '2px 8px',
+                color: continuousLoop ? '#0284c7' : 'inherit',
+              }}
+              title="Runs round-the-clock across all pages. Re-polls page 0 indefinitely when 0 pending scans remain."
+            >
+              <input
+                type="checkbox"
+                className="checkbox"
+                checked={continuousLoop}
+                onChange={(e) => {
+                  const val = e.target.checked;
+                  setContinuousLoop(val);
+                  saveServerViewConfig({ continuousLoop: val });
+                  saveSettings({ v1ContinuousLoop: val });
+                }}
+                disabled={running}
+              />
+              <span>24/7 Overtime Loop</span>
+            </label>
+
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 12.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+                userSelect: 'none',
+              }}
+              title="Auto re-analyze scans that have 0 extracted items"
+            >
+              <input
+                type="checkbox"
+                className="checkbox"
+                checked={reanalyzeEmptyItems}
+                onChange={(e) => {
+                  const val = e.target.checked;
+                  setReanalyzeEmptyItems(val);
+                  saveServerViewConfig({ reanalyzeEmptyItems: val });
+                  saveSettings({ v1ReanalyzeEmptyItems: val });
+                }}
+                disabled={running}
+              />
+              <span>Include 0-item scans</span>
+            </label>
 
             <label
               style={{

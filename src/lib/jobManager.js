@@ -71,6 +71,13 @@ let serverJobState = {
   updateMode: 'single',
   autoNextPage: true,
   skipApproved: false,
+  continuousLoop: false,
+  loopInterval: 15,
+  reanalyzeEmptyItems: true,
+  targetMode: 'pending_and_empty',
+  waitingNextPass: false,
+  nextPassCountdown: null,
+  passesCompleted: 0,
   onlyScanIds: null,
   stats: {
     analyzed: 0,
@@ -197,6 +204,10 @@ export async function startServerScanJob({
   updateMode,
   autoNextPage,
   skipApproved,
+  continuousLoop,
+  loopInterval,
+  reanalyzeEmptyItems,
+  targetMode,
   onlyScanIds = null,
   isResume = false,
   onToast,
@@ -225,6 +236,24 @@ export async function startServerScanJob({
       : serverJobState.skipApproved !== undefined
       ? !!serverJobState.skipApproved
       : !!cfg.v1SkipApproved;
+  const effectiveContinuousLoop =
+    continuousLoop !== undefined
+      ? !!continuousLoop
+      : serverJobState.continuousLoop !== undefined
+      ? !!serverJobState.continuousLoop
+      : !!cfg.v1ContinuousLoop;
+  const effectiveLoopInterval =
+    Number(loopInterval ?? serverJobState.loopInterval ?? cfg.v1LoopInterval) || 15;
+  const effectiveReanalyzeEmptyItems =
+    reanalyzeEmptyItems !== undefined
+      ? !!reanalyzeEmptyItems
+      : serverJobState.reanalyzeEmptyItems !== undefined
+      ? !!serverJobState.reanalyzeEmptyItems
+      : cfg.v1ReanalyzeEmptyItems !== undefined
+      ? !!cfg.v1ReanalyzeEmptyItems
+      : true;
+  const effectiveTargetMode =
+    targetMode || serverJobState.targetMode || cfg.v1TargetMode || 'pending_and_empty';
 
   serverStopFlag = false;
   serverPauseFlag = false;
@@ -232,7 +261,9 @@ export async function startServerScanJob({
   const baseStats = isResume
     ? {
         ...serverJobState.stats,
-        bannerMsg: `Resumed /v1 scan analysis on page ${startPage + 1}…`,
+        bannerMsg: effectiveContinuousLoop
+          ? `Resumed 24/7 Overtime Runner on page ${startPage + 1}…`
+          : `Resumed /v1 scan analysis on page ${startPage + 1}…`,
       }
     : {
         analyzed: 0,
@@ -242,7 +273,9 @@ export async function startServerScanJob({
         pagesProcessed: 0,
         currentScanIndex: 0,
         totalOnPage: 0,
-        bannerMsg: 'Starting /v1 scan AI pipeline…',
+        bannerMsg: effectiveContinuousLoop
+          ? 'Starting 24/7 Overtime Continuous AI Runner…'
+          : 'Starting /v1 scan AI pipeline…',
       };
 
   await persistServerJobState({
@@ -257,6 +290,12 @@ export async function startServerScanJob({
     updateMode: effectiveUpdateMode,
     autoNextPage: onlyScanIds ? false : effectiveAutoNext,
     skipApproved: effectiveSkipApproved,
+    continuousLoop: effectiveContinuousLoop,
+    loopInterval: effectiveLoopInterval,
+    reanalyzeEmptyItems: effectiveReanalyzeEmptyItems,
+    targetMode: effectiveTargetMode,
+    waitingNextPass: false,
+    nextPassCountdown: null,
     onlyScanIds,
     stats: baseStats,
   });
@@ -272,12 +311,18 @@ export async function startServerScanJob({
       updateMode: effectiveUpdateMode,
       autoNextPage: onlyScanIds ? false : effectiveAutoNext,
       skipApproved: effectiveSkipApproved,
+      targetMode: effectiveTargetMode,
+      reanalyzeEmptyItems: effectiveReanalyzeEmptyItems,
+      continuousLoop: effectiveContinuousLoop,
+      loopInterval: effectiveLoopInterval,
       onlyScanIds,
       shouldStop: () => serverStopFlag || serverPauseFlag,
       onPageLoaded: (loadedPageData, loadedPageIndex) => {
         serverJobState.lastPageData = loadedPageData;
         persistServerJobState({
           page: loadedPageIndex,
+          waitingNextPass: false,
+          nextPassCountdown: null,
           stats: {
             ...serverJobState.stats,
             bannerMsg: `Loaded page ${loadedPageIndex + 1} of ${loadedPageData.totalPages} (${loadedPageData.content.length} scans)…`,
@@ -366,6 +411,8 @@ export async function startServerScanJob({
 
         persistServerJobState({
           stats: nextStats,
+          waitingNextPass: false,
+          nextPassCountdown: null,
         });
 
         if (evt.stage === 'updated' || evt.stage === 'analyzed') {
@@ -389,6 +436,21 @@ export async function startServerScanJob({
             pagesProcessed: (serverJobState.stats.pagesProcessed || 0) + 1,
             bannerMsg: syncMsg,
           },
+        });
+      },
+      onLoopWaiting: (waitInfo) => {
+        persistServerJobState({
+          waitingNextPass: true,
+          nextPassCountdown: waitInfo.secondsRemaining,
+          stats: {
+            ...serverJobState.stats,
+            bannerMsg: waitInfo.message,
+          },
+        });
+      },
+      onLoopPassComplete: (passInfo) => {
+        persistServerJobState({
+          passesCompleted: passInfo.passesCompleted,
         });
       },
     });
@@ -415,6 +477,8 @@ export async function startServerScanJob({
       running: false,
       paused: wasPaused,
       stopping: false,
+      waitingNextPass: false,
+      nextPassCountdown: null,
       page: summary.lastPage,
       onlyScanIds: null,
       activeScan: null,
@@ -614,7 +678,7 @@ export async function startLocalQueueJob({
         try {
           const dataUrl = await blobToDataUrl(q.blob);
           const rec = await extractWithAI(dataUrl);
-          const record = {
+          q.record = {
             ...rec,
             id: uid(),
             scanId: rec.scanId != null ? rec.scanId : q.scanId,
@@ -624,8 +688,7 @@ export async function startLocalQueueJob({
             image: dataUrl,
             saved_at: new Date().toISOString(),
           };
-          await put('invoices', record);
-          q.recordId = record.id;
+          q.recordId = q.record.id;
           q.docNo = rec.no || null;
           q.itemsCount = (rec.items || []).length;
           q.status = 'done';
@@ -775,8 +838,9 @@ export async function bootPersistentJobs({
       emitChange();
 
       const s = getSettings();
-      if (wasRunningBeforeUnload && s.key && s.base) {
-        onToast?.(`Auto-resuming Server Scans job on page ${(savedServerJob.page || 0) + 1}…`);
+      if (wasRunningBeforeUnload && s.base?.trim()) {
+        const loopModeMsg = savedServerJob.continuousLoop ? ' in 24/7 Overtime Mode' : '';
+        onToast?.(`Auto-resuming Server Scans job${loopModeMsg} on page ${(savedServerJob.page || 0) + 1}…`);
         setTimeout(() => {
           startServerScanJob({
             page: savedServerJob.page || 0,
@@ -786,6 +850,10 @@ export async function bootPersistentJobs({
             updateMode: savedServerJob.updateMode,
             autoNextPage: savedServerJob.autoNextPage,
             skipApproved: savedServerJob.skipApproved,
+            continuousLoop: savedServerJob.continuousLoop,
+            loopInterval: savedServerJob.loopInterval,
+            reanalyzeEmptyItems: savedServerJob.reanalyzeEmptyItems,
+            targetMode: savedServerJob.targetMode,
             onlyScanIds: savedServerJob.onlyScanIds,
             isResume: true,
             onToast,

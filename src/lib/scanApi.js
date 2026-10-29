@@ -1,5 +1,5 @@
 /* Unauthenticated /v1 Scan API client + AI Analyze & Auto-Next-Page Sync Engine */
-import { getSettings, put } from './db.js';
+import { getSettings } from './db.js';
 import { extractWithAI } from './ai.js';
 import { compressImage, num, uid } from './util.js';
 
@@ -22,6 +22,10 @@ export const DEFAULT_SCAN_API_SETTINGS = {
   v1PageSize: '50',
   v1AutoNextPage: true,
   v1SkipApproved: false,
+  v1ContinuousLoop: false,
+  v1LoopInterval: 15,
+  v1ReanalyzeEmptyItems: true,
+  v1TargetMode: 'pending_and_empty',
   useProxy: 'auto', // 'auto' | 'always' | 'never'
 };
 
@@ -70,6 +74,10 @@ export function getScanApiConfig(overrides = {}) {
     v1PageSize: String(overrides.v1PageSize ?? s.v1PageSize ?? DEFAULT_SCAN_API_SETTINGS.v1PageSize),
     v1AutoNextPage: overrides.v1AutoNextPage ?? (s.v1AutoNextPage !== undefined ? !!s.v1AutoNextPage : DEFAULT_SCAN_API_SETTINGS.v1AutoNextPage),
     v1SkipApproved: overrides.v1SkipApproved ?? (s.v1SkipApproved !== undefined ? !!s.v1SkipApproved : DEFAULT_SCAN_API_SETTINGS.v1SkipApproved),
+    v1ContinuousLoop: overrides.v1ContinuousLoop ?? (s.v1ContinuousLoop !== undefined ? !!s.v1ContinuousLoop : DEFAULT_SCAN_API_SETTINGS.v1ContinuousLoop),
+    v1LoopInterval: Number(overrides.v1LoopInterval ?? s.v1LoopInterval ?? DEFAULT_SCAN_API_SETTINGS.v1LoopInterval) || 15,
+    v1ReanalyzeEmptyItems: overrides.v1ReanalyzeEmptyItems ?? (s.v1ReanalyzeEmptyItems !== undefined ? !!s.v1ReanalyzeEmptyItems : DEFAULT_SCAN_API_SETTINGS.v1ReanalyzeEmptyItems),
+    v1TargetMode: String(overrides.v1TargetMode ?? s.v1TargetMode ?? DEFAULT_SCAN_API_SETTINGS.v1TargetMode),
     useProxy: overrides.useProxy ?? s.useProxy ?? DEFAULT_SCAN_API_SETTINGS.useProxy,
   };
 }
@@ -564,14 +572,12 @@ export async function batchUpdateScansV1(scanPayloads, { configOverrides = {}, s
 
 /**
  * Analyzes a single scan object (from `/v1/list/scans` or `/v1/{scanId}/scan`) using its `imageUrl`
- * and `PROMPT` in `src/lib/ai.js`, saves a copy in local IndexedDB (`invoices`), and optionally posts
- * the single update to `POST /v1/{scanId}/scan` with `reviewStatus = "APPROVED"`.
+ * and `PROMPT` in `src/lib/ai.js`, and posts the analyzed update to `POST /v1/{scanId}/scan` with `reviewStatus = "APPROVED"`.
  */
 export async function analyzeOneServerScan(
   scan,
   {
     postImmediately = true,
-    saveToLocalDb = true,
     configOverrides = {},
     signal,
   } = {}
@@ -580,32 +586,6 @@ export async function analyzeOneServerScan(
   const dataUrl = await fetchScanImageDataUrl(scan, scan.id, { configOverrides, signal });
   const extracted = await extractWithAI(dataUrl);
   const payload = buildScanUpdatePayload(scan.id, extracted, 'APPROVED');
-
-  if (saveToLocalDb) {
-    const localRecord = {
-      ...extracted,
-      id: `scan-${scan.id}`,
-      scanId: String(scan.id),
-      no: payload.invoiceNo,
-      invoiceDate: payload.invoiceDate,
-      dealerCode: payload.dealerCode,
-      saleOrder: payload.saleOrder,
-      vendorCode: payload.vendorCode,
-      vehicleCode: payload.vehicleCode,
-      warehouse: payload.warehouse,
-      route: payload.route,
-      items: payload.items,
-      originalFile: scan.originalFilename || `scan-${scan.id}.jpg`,
-      image: dataUrl,
-      reviewStatus: 'APPROVED',
-      saved_at: new Date().toISOString(),
-    };
-    try {
-      await put('invoices', localRecord);
-    } catch (_) {
-      // Ignore local IndexedDB errors when running headless
-    }
-  }
 
   let updatedScan = null;
   if (postImmediately) {
@@ -639,15 +619,46 @@ export function isScanApproved(scan, scanStatuses = {}) {
 }
 
 /**
+ * Checks if a scan is pending analysis or review.
+ */
+export function isScanPending(scan, scanStatuses = {}) {
+  if (!scan) return false;
+  const scanId = scan.id ?? scan.scanId;
+  if (scanId && scanStatuses[scanId]?.stage === 'updated') return false;
+  return !isScanApproved(scan, scanStatuses);
+}
+
+/**
+ * Checks if a scan has 0 items or no items recorded.
+ */
+export function isScanEmptyItems(scan, scanStatuses = {}) {
+  if (!scan) return true;
+  const scanId = scan.id ?? scan.scanId;
+  const st = scanStatuses[scanId];
+  if (st && st.itemsCount != null) {
+    return st.itemsCount === 0;
+  }
+  if (Array.isArray(scan.items)) {
+    return scan.items.length === 0;
+  }
+  if (scan.itemsCount != null) {
+    return Number(scan.itemsCount) === 0;
+  }
+  return null; // Unknown from list summary
+}
+
+/**
  * Main End-to-End Pipeline:
  * 1. Calls `GET /v1/list/scans` for the current page.
- * 2. Accesses each scan's `imageUrl` and analyzes it with `extractWithAI` (following `PROMPT` in `src/lib/ai.js`).
- * 3. Posts the analyzed headers + items to update the scan(s) with `reviewStatus = "APPROVED"`:
+ * 2. Filters candidates based on:
+ *    - PENDING scans
+ *    - Scans with 0 items (when reanalyzeEmptyItems is enabled)
+ * 3. Accesses each scan's `imageUrl` and analyzes it with `extractWithAI`.
+ * 4. Posts the analyzed headers + items to update the scan(s) with `reviewStatus = "APPROVED"`:
  *    - `updateMode === 'single'`: posts each scan immediately via `POST /v1/{scanId}/scan`
  *    - `updateMode === 'batch'`: posts all analyzed scans on the page together via `POST /v1/list/scans`
  *    - `updateMode === 'both'`: posts each scan immediately AND sends the batch confirmation at the end of the page
- * 4. Automatically switches to the next page once the current page has been analyzed & updated to the backend,
- *    continuing until all pages are complete or stopped by the caller.
+ * 5. Automatically switches to the next page, or in 24/7 continuous overtime mode, polls page 0 indefinitely.
  */
 export async function analyzeAndSyncScansPages({
   startPage = 0,
@@ -657,12 +668,18 @@ export async function analyzeAndSyncScansPages({
   updateMode,
   autoNextPage,
   skipApproved,
+  targetMode = 'pending_and_empty', // 'pending_and_empty' | 'pending_only' | 'empty_items_only' | 'all'
+  reanalyzeEmptyItems = true,
+  continuousLoop = false,
+  loopInterval = 15,
   onlyScanIds = null,
   configOverrides = {},
   shouldStop = () => false,
   onPageLoaded = () => {},
   onScanProgress = () => {},
   onPageSynced = () => {},
+  onLoopWaiting = () => {},
+  onLoopPassComplete = () => {},
 } = {}) {
   const cfg = getScanApiConfig(configOverrides);
   const effectiveMode = updateMode || cfg.v1UpdateMode || 'single';
@@ -677,6 +694,7 @@ export async function analyzeAndSyncScansPages({
   let totalFailed = 0;
   let totalSkipped = 0;
   let pagesProcessed = 0;
+  let passesCompleted = 0;
   const processedScanIds = new Set();
 
   while (!shouldStop()) {
@@ -690,23 +708,73 @@ export async function analyzeAndSyncScansPages({
 
     onPageLoaded(pageData, currentPage);
 
-    if (!pageData.content.length) {
-      break;
+    if (!pageData.content.length && (!continuousLoop || currentPage > 0)) {
+      if (!continuousLoop) {
+        break;
+      }
     }
 
-    const skippedOnPage = pageData.content.filter((scan) => {
-      if (filterSet && !filterSet.has(String(scan.id))) return false;
-      return effectiveSkipApproved && isScanApproved(scan);
-    });
+    const candidates = [];
+    const skippedOnPage = [];
 
-    const candidates = pageData.content.filter((scan) => {
-      if (filterSet && !filterSet.has(String(scan.id))) return false;
-      if (effectiveSkipApproved && isScanApproved(scan)) return false;
-      if (processedScanIds.has(String(scan.id))) return false;
-      return true;
-    });
+    for (const scan of pageData.content) {
+      if (filterSet && !filterSet.has(String(scan.id))) {
+        continue;
+      }
+      if (processedScanIds.has(String(scan.id))) {
+        continue;
+      }
 
-    // Notify telemetry about skipped already-APPROVED scans
+      const approved = isScanApproved(scan);
+
+      // 1. Scan is PENDING
+      if (!approved) {
+        if (targetMode === 'empty_items_only') {
+          skippedOnPage.push(scan);
+        } else {
+          candidates.push(scan);
+        }
+        continue;
+      }
+
+      // 2. Scan is APPROVED
+      if (targetMode === 'pending_only' || (effectiveSkipApproved && !reanalyzeEmptyItems)) {
+        skippedOnPage.push(scan);
+        continue;
+      }
+
+      if (targetMode === 'all') {
+        candidates.push(scan);
+        continue;
+      }
+
+      // Check if approved scan has 0 items
+      let hasNoItems = false;
+      if (Array.isArray(scan.items)) {
+        hasNoItems = scan.items.length === 0;
+      } else if (scan.itemsCount != null) {
+        hasNoItems = Number(scan.itemsCount) === 0;
+      } else {
+        // Items not present on list item summary: fetch single scan detail
+        try {
+          const detail = await fetchScanById(scan.id, { configOverrides });
+          const items = detail.items || [];
+          scan.items = items;
+          scan.itemsCount = items.length;
+          hasNoItems = items.length === 0;
+        } catch (_) {
+          hasNoItems = false;
+        }
+      }
+
+      if (hasNoItems) {
+        candidates.push(scan);
+      } else {
+        skippedOnPage.push(scan);
+      }
+    }
+
+    // Notify telemetry about skipped already-APPROVED scans with items
     if (skippedOnPage.length > 0) {
       totalSkipped += skippedOnPage.length;
       skippedOnPage.forEach((s) => {
@@ -717,7 +785,7 @@ export async function analyzeAndSyncScansPages({
           page: currentPage,
           stage: 'skipped',
           count: 1,
-          message: 'Skipped (Already APPROVED)',
+          message: 'Skipped (Approved with items)',
         });
       });
     }
@@ -746,7 +814,6 @@ export async function analyzeAndSyncScansPages({
         const postSingleNow = effectiveMode === 'single' || effectiveMode === 'both';
         const result = await analyzeOneServerScan(scan, {
           postImmediately: postSingleNow,
-          saveToLocalDb: true,
           configOverrides,
         });
 
@@ -791,6 +858,10 @@ export async function analyzeAndSyncScansPages({
         });
         if (err.message === 'NO_SETTINGS') {
           throw err;
+        }
+        if (continuousLoop && !shouldStop()) {
+          // In 24/7 Overtime mode, back off gracefully on network/rate-limit hiccup and continue
+          await new Promise((r) => setTimeout(r, 8000));
         }
       }
     }
@@ -837,28 +908,62 @@ export async function analyzeAndSyncScansPages({
       batchResponse,
     });
 
-    // Stop if user only requested specific scan IDs on the current page or if autoNextPage is off
-    if (!effectiveAutoNext || filterSet) {
+    // Stop if user only requested specific scan IDs on current page
+    if (filterSet) {
       break;
     }
 
-    // Determine next page:
-    // If filtering by reviewStatus === 'PENDING' and at least one scan on this page was updated to APPROVED,
-    // remaining PENDING scans shift into the current page index; otherwise advance to currentPage + 1.
+    // If autoNextPage is off and not in continuousLoop, stop
+    if (!effectiveAutoNext && !continuousLoop) {
+      break;
+    }
+
+    // If filtering by reviewStatus === 'PENDING' and items were updated to APPROVED on this page,
+    // newly shifted pending scans are now on currentPage!
     const filteringPendingReview = String(filters.reviewStatus || '').toUpperCase() === 'PENDING';
     if (filteringPendingReview && pageSuccessCount > 0) {
-      // Stay on currentPage to pick up newly shifted PENDING scans, unless no more items exist
       continue;
     }
 
-    if (pageData.last || currentPage + 1 >= pageData.totalPages) {
-      break;
+    const isLastPage = pageData.last || currentPage + 1 >= pageData.totalPages;
+    if (isLastPage || (!pageData.content.length && candidates.length === 0)) {
+      if (!continuousLoop) {
+        break;
+      }
+
+      // In 24/7 Overtime Continuous Looping Mode:
+      passesCompleted++;
+      onLoopPassComplete?.({ passesCompleted, totalAnalyzed, totalUpdated, totalFailed, totalSkipped });
+
+      const waitSecs = Math.max(5, Number(loopInterval) || 15);
+      for (let s = waitSecs; s > 0; s--) {
+        if (shouldStop()) break;
+        onLoopWaiting?.({
+          passesCompleted,
+          secondsRemaining: s,
+          waitSecs,
+          message: `24/7 Overtime Active · All pending & empty-item scans processed. Polling for new uploads in ${s}s… (Pass #${passesCompleted})`,
+        });
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      if (shouldStop()) break;
+
+      // Reset to page 0 to poll for newly uploaded scans!
+      currentPage = 0;
+      if (processedScanIds.size > 500) {
+        const arr = Array.from(processedScanIds);
+        processedScanIds.clear();
+        arr.slice(-300).forEach((id) => processedScanIds.add(id));
+      }
+      continue;
     }
+
     currentPage += 1;
   }
 
   return {
     pagesProcessed,
+    passesCompleted,
     lastPage: currentPage,
     totalAnalyzed,
     totalUpdated,

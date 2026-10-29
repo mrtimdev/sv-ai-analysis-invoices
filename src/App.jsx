@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { openDb, getAll, get, del, metaGet, metaSet } from './lib/db.js';
+import { openDb, getAll, metaGet, metaSet } from './lib/db.js';
 import {
   getJobManagerSnapshot,
   subscribeJobManager,
@@ -11,8 +11,6 @@ import {
 } from './lib/jobManager.js';
 import QueueView from './components/QueueView.jsx';
 import ServerScansView from './components/ServerScansView.jsx';
-import CaptureView from './components/CaptureView.jsx';
-import ListView from './components/ListView.jsx';
 import DetailModal from './components/DetailModal.jsx';
 import SettingsModal from './components/SettingsModal.jsx';
 import { Ic } from './components/icons.jsx';
@@ -20,19 +18,14 @@ import { Ic } from './components/icons.jsx';
 const TABS = [
   { id: 'server', label: 'Server Scans', icon: Ic.queue },
   { id: 'queue', label: 'Batch Queue', icon: Ic.folder },
-  { id: 'capture', label: 'Capture', icon: Ic.capture },
-  { id: 'list', label: 'Invoices', icon: Ic.invoices },
 ];
 
 export default function App() {
   const [ready, setReady] = useState(false);
   const [tab, setTab] = useState('server');
-  const [records, setRecords] = useState([]);
   const [queuePendingCount, setQueuePendingCount] = useState(0);
-  const [detailId, setDetailId] = useState(null);
   const [detailRec, setDetailRec] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [editRecord, setEditRecord] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [jobSnapshot, setJobSnapshot] = useState(getJobManagerSnapshot());
   const toastId = useRef(0);
@@ -43,16 +36,11 @@ export default function App() {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3400);
   }, []);
 
-  const loadRecords = useCallback(async () => {
-    const recs = (await getAll('invoices')).sort((a, b) =>
-      String(b.invoiceDate || b.saved_at).localeCompare(String(a.invoiceDate || a.saved_at))
-    );
-    setRecords(recs);
+  const refreshQueueCount = useCallback(async () => {
     try {
       const q = await getAll('queue');
       setQueuePendingCount(q.filter((x) => x.status === 'pending' || x.status === 'running').length);
     } catch (_) {}
-    return recs;
   }, []);
 
   const switchTab = useCallback((nextTab) => {
@@ -66,70 +54,43 @@ export default function App() {
         const savedTab = await metaGet('activeTab');
         if (savedTab && TABS.some((t) => t.id === savedTab)) {
           setTab(savedTab);
+        } else {
+          setTab('server');
         }
-        await loadRecords();
+        await refreshQueueCount();
         setReady(true);
         await bootPersistentJobs({
           onToast: toast,
-          onRecordsChanged: loadRecords,
+          onRecordsChanged: refreshQueueCount,
           onNeedSettings: () => setSettingsOpen(true),
         });
       })
       .catch(() => toast('Storage unavailable in this browser', true));
-  }, [loadRecords, toast]);
+  }, [refreshQueueCount, toast]);
 
   useEffect(() => {
     if (!ready) return;
     return subscribeJobManager((snap) => {
       setJobSnapshot(snap);
-      getAll('queue')
-        .then((q) => {
-          setQueuePendingCount(
-            q.filter((x) => x.status === 'pending' || x.status === 'running').length
-          );
-        })
-        .catch(() => {});
+      refreshQueueCount();
     });
-  }, [ready]);
+  }, [ready, refreshQueueCount]);
 
-  const openDetail = useCallback(async (id) => {
-    if (!id) return;
-    const r = await get('invoices', id);
-    if (!r) return;
-    setDetailId(id);
-    setDetailRec(r);
+  const openQueueDetail = useCallback((item) => {
+    if (!item) return;
+    setDetailRec(item.record || item);
   }, []);
 
   const openServerDetail = useCallback((rec) => {
     if (!rec) return;
-    setDetailId(rec.id || null);
     setDetailRec(rec);
   }, []);
 
-  const deleteDetail = async () => {
-    if (!detailId) return;
-    if (!window.confirm('Delete this record?')) return;
-    await del('invoices', detailId);
-    setDetailRec(null);
-    setDetailId(null);
-    toast('Record deleted');
-    loadRecords();
-  };
-
-  const editDetail = () => {
-    const r = detailRec;
-    setDetailRec(null);
-    setDetailId(null);
-    setEditRecord(r);
-    switchTab('capture');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const doneCnt = records.length;
   const serverRunning = jobSnapshot.serverJob?.running;
+  const serverWaiting = jobSnapshot.serverJob?.waitingNextPass;
   const localRunning = jobSnapshot.localQueue?.running;
 
-  if (!ready)
+  if (!ready) {
     return (
       <div
         style={{
@@ -142,10 +103,11 @@ export default function App() {
       >
         <div style={{ textAlign: 'center' }}>
           <span className="pulse" style={{ width: 26, height: 26, borderWidth: 3 }} />
-          <div style={{ marginTop: 12, fontWeight: 600 }}>Opening local database…</div>
+          <div style={{ marginTop: 12, fontWeight: 600 }}>Initializing SV AI Analysis…</div>
         </div>
       </div>
     );
+  }
 
   return (
     <div className="shell">
@@ -154,7 +116,7 @@ export default function App() {
           <div className="mark">SV</div>
           <div>
             <div className="t">SV AI Analysis</div>
-            <div className="s">Invoice intelligence</div>
+            <div className="s">24/7 Overtime Engine</div>
           </div>
         </div>
         <nav className="nav">
@@ -166,34 +128,38 @@ export default function App() {
             >
               <t.icon className="ic" />
               <span>{t.label}</span>
-              {t.id === 'server' && serverRunning && <span className="cnt live">LIVE</span>}
+              {t.id === 'server' && (serverRunning || serverWaiting) && (
+                <span className={`cnt ${serverWaiting ? '' : 'live'}`} style={serverWaiting ? { background: '#f59e0b', color: '#111' } : {}}>
+                  {serverWaiting ? 'IDLE' : 'LIVE'}
+                </span>
+              )}
               {t.id === 'queue' && (localRunning || queuePendingCount > 0) && (
                 <span className={'cnt' + (localRunning ? ' live' : '')}>
                   {localRunning ? 'LIVE' : queuePendingCount}
                 </span>
               )}
-              {t.id === 'list' && doneCnt > 0 && <span className="cnt">{doneCnt}</span>}
             </button>
           ))}
         </nav>
         <div className="foot">
-          Background jobs persist across tabs &amp; page refresh · KHB v1
+          24/7 continuous overtime runner · Persistent background pipeline
         </div>
       </aside>
 
       <main className="main">
-        {/* Global Background Job Banner when user switches away from the active job tab */}
-        {serverRunning && tab !== 'server' && (
+        {/* Global Background Job Banner when user switches away from the server tab */}
+        {(serverRunning || serverWaiting) && tab !== 'server' && (
           <div className="global-job-bar">
             <div className="row" style={{ gap: 10 }}>
-              <span className="pulse" style={{ borderColor: '#818cf8', borderTopColor: '#fff' }} />
+              <span className="pulse" style={{ borderColor: serverWaiting ? '#f59e0b' : '#818cf8', borderTopColor: '#fff' }} />
               <div>
                 <div style={{ fontWeight: 800, fontSize: 13 }}>
-                  Server Scans AI Job Running in Background
+                  Server Scans 24/7 Overtime Runner Active
                 </div>
                 <div style={{ fontSize: 11.5, color: '#cbd5e1' }}>
-                  {jobSnapshot.serverJob.stats?.bannerMsg || 'Processing scans…'} · Updated:{' '}
+                  {jobSnapshot.serverJob.stats?.bannerMsg || (serverWaiting ? `Waiting for next poll pass (${jobSnapshot.serverJob.nextPassCountdown || 0}s)…` : 'Processing server scans…')} · Updated:{' '}
                   <b>{jobSnapshot.serverJob.stats?.updated || 0}</b>
+                  {jobSnapshot.serverJob.passesCompleted > 0 && ` · Passes: ${jobSnapshot.serverJob.passesCompleted}`}
                 </div>
               </div>
             </div>
@@ -265,13 +231,11 @@ export default function App() {
 
         <div className="pagehead">
           <div>
-            <h1>{TABS.find((t) => t.id === tab).label}</h1>
+            <h1>{TABS.find((t) => t.id === tab)?.label || 'Server Scans'}</h1>
             <div className="sub">
               {tab === 'server' &&
-                'Fetch /v1/list/scans, analyze imageUrl with AI, POST update with APPROVED & auto-next page'}
-              {tab === 'queue' && 'Drop, queue and batch-extract document scans'}
-              {tab === 'capture' && 'Single document capture with AI extraction'}
-              {tab === 'list' && 'Search, review and manage extracted records'}
+                '24/7 continuous overtime auto-analysis on PENDING scans and empty-item documents'}
+              {tab === 'queue' && 'Drop, queue and batch-extract local document scans'}
             </div>
           </div>
           <button className="btn" onClick={() => setSettingsOpen(true)}>
@@ -283,7 +247,7 @@ export default function App() {
           <ServerScansView
             toast={toast}
             openSettings={() => setSettingsOpen(true)}
-            onRecordsChanged={loadRecords}
+            onRecordsChanged={refreshQueueCount}
             openServerDetail={openServerDetail}
           />
         )}
@@ -291,37 +255,15 @@ export default function App() {
           <QueueView
             toast={toast}
             openSettings={() => setSettingsOpen(true)}
-            onRecordsChanged={loadRecords}
-            openDetail={openDetail}
-          />
-        )}
-        {tab === 'capture' && (
-          <CaptureView
-            toast={toast}
-            openSettings={() => setSettingsOpen(true)}
-            onSaved={loadRecords}
-            editRecord={editRecord}
-            onEditDone={() => setEditRecord(null)}
-          />
-        )}
-        {tab === 'list' && (
-          <ListView
-            records={records}
-            refresh={loadRecords}
-            toast={toast}
-            openDetail={openDetail}
+            onRecordsChanged={refreshQueueCount}
+            openDetail={openQueueDetail}
           />
         )}
       </main>
 
       <DetailModal
         record={detailRec}
-        onClose={() => {
-          setDetailRec(null);
-          setDetailId(null);
-        }}
-        onDelete={deleteDetail}
-        onEdit={editDetail}
+        onClose={() => setDetailRec(null)}
       />
       <SettingsModal
         open={settingsOpen}

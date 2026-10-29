@@ -23,6 +23,13 @@ const PAGE_SIZE_OPTIONS = [
   { value: 'all', label: 'All scans (unpaged)' },
 ];
 
+const TARGET_MODE_OPTIONS = [
+  { value: 'pending_and_empty', label: 'PENDING scans + 0-item scans (Recommended for 24/7 Overtime)' },
+  { value: 'pending_only', label: 'PENDING scans only' },
+  { value: 'empty_items_only', label: 'Empty-item scans only (items.length === 0)' },
+  { value: 'all', label: 'All scans on page (force re-analyze everything)' },
+];
+
 export default function SettingsModal({ open, onClose, onSaved }) {
   const s = getSettings();
   const v1Defaults = getScanApiConfig();
@@ -43,6 +50,12 @@ export default function SettingsModal({ open, onClose, onSaved }) {
   const [v1PageSize, setV1PageSize] = useState(s.v1PageSize || '50');
   const [v1AutoNextPage, setV1AutoNextPage] = useState(s.v1AutoNextPage !== undefined ? !!s.v1AutoNextPage : true);
   const [v1SkipApproved, setV1SkipApproved] = useState(!!s.v1SkipApproved);
+
+  // 24/7 Overtime Runner settings
+  const [v1ContinuousLoop, setV1ContinuousLoop] = useState(!!s.v1ContinuousLoop);
+  const [v1LoopInterval, setV1LoopInterval] = useState(s.v1LoopInterval !== undefined ? s.v1LoopInterval : 15);
+  const [v1ReanalyzeEmptyItems, setV1ReanalyzeEmptyItems] = useState(s.v1ReanalyzeEmptyItems !== undefined ? !!s.v1ReanalyzeEmptyItems : true);
+  const [v1TargetMode, setV1TargetMode] = useState(s.v1TargetMode || 'pending_and_empty');
 
   const [testingV1, setTestingV1] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -77,6 +90,10 @@ export default function SettingsModal({ open, onClose, onSaved }) {
       setV1PageSize(cur.v1PageSize || '50');
       setV1AutoNextPage(cur.v1AutoNextPage !== undefined ? !!cur.v1AutoNextPage : true);
       setV1SkipApproved(!!cur.v1SkipApproved);
+      setV1ContinuousLoop(!!cur.v1ContinuousLoop);
+      setV1LoopInterval(cur.v1LoopInterval !== undefined ? cur.v1LoopInterval : 15);
+      setV1ReanalyzeEmptyItems(cur.v1ReanalyzeEmptyItems !== undefined ? !!cur.v1ReanalyzeEmptyItems : true);
+      setV1TargetMode(cur.v1TargetMode || 'pending_and_empty');
       setTestResult(null);
       setModelStatus(null);
     }
@@ -141,6 +158,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
   };
 
   const save = () => {
+    const loopInt = Math.max(3, parseInt(v1LoopInterval, 10) || 15);
     saveSettings({
       base: base.trim(),
       key: key.trim(),
@@ -155,10 +173,18 @@ export default function SettingsModal({ open, onClose, onSaved }) {
       v1PageSize,
       v1AutoNextPage,
       v1SkipApproved,
+      v1ContinuousLoop,
+      v1LoopInterval: loopInt,
+      v1ReanalyzeEmptyItems,
+      v1TargetMode,
     });
     saveServerViewConfig({
       skipApproved: v1SkipApproved,
       autoNextPage: v1AutoNextPage,
+      continuousLoop: v1ContinuousLoop,
+      loopInterval: loopInt,
+      reanalyzeEmptyItems: v1ReanalyzeEmptyItems,
+      targetMode: v1TargetMode,
     });
     onSaved();
     onClose();
@@ -546,7 +572,74 @@ export default function SettingsModal({ open, onClose, onSaved }) {
             </label>
           </div>
 
+          <div style={{ height: 1, background: 'var(--line)', margin: '18px 0 14px' }} />
+
+          {/* 3. 24/7 Overtime Runner & Analysis Targets */}
+          <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
+            <h2 style={{ fontSize: 13.5, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>⚡</span> 3. 24/7 Overtime Runner &amp; Target Filter
+            </h2>
+          </div>
+          <p style={{ color: 'var(--muted)', fontSize: 12.5, marginBottom: 12 }}>
+            Automatic continuous loop analyzing PENDING scans and empty-item documents across all pages 24/7.
+          </p>
+
+          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            <label className="f" style={{ gridColumn: '1 / -1' }}>
+              Target Analysis Filter
+              <Select
+                isSearchable={false}
+                menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
+                styles={coolSelectStyles}
+                value={TARGET_MODE_OPTIONS.find((opt) => opt.value === v1TargetMode)}
+                onChange={(opt) => setV1TargetMode(opt ? opt.value : 'pending_and_empty')}
+                options={TARGET_MODE_OPTIONS}
+              />
+            </label>
+
+            <label className="f">
+              Idle Re-poll Interval (seconds)
+              <input
+                type="number"
+                min="3"
+                max="3600"
+                value={v1LoopInterval}
+                onChange={(e) => setV1LoopInterval(e.target.value)}
+                placeholder="15"
+              />
+              <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                Seconds to wait before re-checking page 0 when no pending scans remain.
+              </span>
+            </label>
+          </div>
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
+            <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 13, cursor: 'pointer', background: 'rgba(56, 189, 248, 0.08)', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(56, 189, 248, 0.25)' }}>
+              <input
+                type="checkbox"
+                className="checkbox"
+                checked={v1ContinuousLoop}
+                onChange={(e) => setV1ContinuousLoop(e.target.checked)}
+                style={{ marginTop: 2 }}
+              />
+              <span>
+                <b style={{ color: '#38bdf8' }}>Enable 24/7 Overtime Continuous Loop</b> — Loops through all pages continuously. Once all pending &amp; empty-item scans are completed, enters an idle countdown and automatically re-polls page 0 indefinitely. Screen Wake Lock keeps the browser awake 24/7.
+              </span>
+            </label>
+
+            <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                className="checkbox"
+                checked={v1ReanalyzeEmptyItems}
+                onChange={(e) => setV1ReanalyzeEmptyItems(e.target.checked)}
+                style={{ marginTop: 2 }}
+              />
+              <span>
+                <b>Auto re-analyze scans with 0 extracted items</b> — If an invoice has empty or missing items (<code>items.length === 0</code>), automatically schedule it for AI re-analysis even if already marked approved.
+              </span>
+            </label>
+
             <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 13, cursor: 'pointer' }}>
               <input
                 type="checkbox"
@@ -556,7 +649,7 @@ export default function SettingsModal({ open, onClose, onSaved }) {
                 style={{ marginTop: 2 }}
               />
               <span>
-                <b>Auto-switch to next page</b> — once all scans on the current page are analyzed and updated to the backend, automatically load and analyze the next page.
+                <b>Auto-switch to next page</b> — once all target scans on the current page are analyzed and updated to the backend, automatically load and analyze the next page.
               </span>
             </label>
 
