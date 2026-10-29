@@ -70,4 +70,19 @@ export function getSettings(){
     v1TargetMode: effectiveTargetMode,
   };
 }
-export function saveSettings(s){ localStorage.setItem(SET_KEY, JSON.stringify(s)); }
+export function saveSettings(partialOrFull = {}) {
+  let existing = {};
+  try {
+    existing = JSON.parse(localStorage.getItem(SET_KEY)) || {};
+  } catch (e) {
+    existing = {};
+  }
+  const current = getSettings();
+  const merged = {
+    ...current,
+    ...existing,
+    ...partialOrFull,
+  };
+  localStorage.setItem(SET_KEY, JSON.stringify(merged));
+  return merged;
+}
