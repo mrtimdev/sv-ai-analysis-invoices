@@ -315,8 +315,8 @@ export default function QueueView({ toast, openSettings, onRecordsChanged, openD
                 cls = 'run';
                 text = 'running in background';
               } else if (paused) {
-                cls = 'pend';
-                text = 'paused';
+                cls = queueJob.autoPausedReason ? 'err' : 'pend';
+                text = queueJob.autoPausedReason ? '⚠️ auto-paused (AI unreachable)' : 'paused';
               } else if (total > 0 && pend.length === 0 && errs.length === 0) {
                 cls = 'ok';
                 text = '✓ completed';
@@ -332,6 +332,53 @@ export default function QueueView({ toast, openSettings, onRecordsChanged, openD
             Jobs persist in this browser and continue running when you switch tabs — if you refresh
             or close the page, active jobs automatically resume when you return.
           </div>
+
+          {paused && queueJob.autoPausedReason && (
+            <div
+              style={{
+                margin: '14px 0',
+                padding: '14px 18px',
+                borderRadius: 10,
+                background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.16) 0%, rgba(245, 158, 11, 0.16) 100%)',
+                border: '1px solid rgba(239, 68, 68, 0.4)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 14,
+                flexWrap: 'wrap',
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 260 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: '#fca5a5' }}>
+                  Queue Auto-Paused · AI API Unreachable
+                </div>
+                <div style={{ fontSize: 12.5, color: '#fecaca', marginTop: 2, fontFamily: 'monospace' }}>
+                  {queueJob.autoPausedReason}
+                </div>
+                <div style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 3 }}>
+                  Active queue item was reverted to pending. Fix AI Base URL or API key in Settings, then resume.
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={openSettings}
+                  style={{ borderColor: 'rgba(245, 158, 11, 0.5)', color: '#fbbf24' }}
+                >
+                  <Ic.gear className="ic" /> AI Settings
+                </button>
+                <button
+                  type="button"
+                  className="btn primary sm"
+                  onClick={startRun}
+                  style={{ background: 'linear-gradient(135deg, #10b981, #059669)', borderColor: '#059669' }}
+                >
+                  <Ic.play className="ic" /> Resume Queue
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="stats">
             <div className="stat total">
@@ -372,7 +419,12 @@ export default function QueueView({ toast, openSettings, onRecordsChanged, openD
                 onClick={startRun}
                 disabled={!pend.length && !errs.length}
               >
-                <Ic.play className="ic" /> {paused ? 'Continue' : 'Start'}
+                <Ic.play className="ic" />{' '}
+                {paused
+                  ? queueJob.autoPausedReason
+                    ? 'Resume Queue (AI Fixed)'
+                    : 'Continue'
+                  : 'Start'}
               </button>
             ) : (
               <React.Fragment>

@@ -13,7 +13,7 @@ import {
   fetchScansPage,
   resolveScanImageUrl,
 } from './scanApi.js';
-import { extractWithAI } from './ai.js';
+import { extractWithAI, isAiAccessibilityError } from './ai.js';
 import { blobToDataUrl, uid } from './util.js';
 
 const SERVER_JOB_META_KEY = 'serverScanJobState_v1';
@@ -50,6 +50,7 @@ let serverJobState = {
   running: false,
   paused: false,
   stopping: false,
+  autoPausedReason: null,
   startedAt: null,
   updatedAt: null,
   page: 0,
@@ -101,6 +102,7 @@ let localQueueState = {
   running: false,
   paused: false,
   stopping: false,
+  autoPausedReason: null,
   chunk: '25',
   chunkCustom: '25',
   etaMs: null,
@@ -302,6 +304,7 @@ export async function startServerScanJob({
     running: true,
     paused: false,
     stopping: false,
+    autoPausedReason: null,
     startedAt: isResume && serverJobState.startedAt ? serverJobState.startedAt : new Date().toISOString(),
     page: startPage,
     size: effectiveSize,
@@ -546,20 +549,34 @@ export async function startServerScanJob({
       );
     }
   } catch (err) {
-    await persistServerJobState({
-      running: false,
-      paused: false,
-      stopping: false,
-      activeScan: null,
-      stats: {
-        ...serverJobState.stats,
-        bannerMsg: `Error: ${err.message}`,
-      },
-    });
-    if (err.message === 'NO_SETTINGS') {
-      onToast?.('Please configure your AI API Base URL in Settings to continue.', true);
+    const isAiErr = isAiAccessibilityError(err);
+    if (isAiErr) {
+      // Auto-pause immediately to prevent failing all subsequent scans
+      await persistServerJobState({
+        running: false,
+        paused: true,
+        stopping: false,
+        autoPausedReason: err.message || 'Unable to access AI API',
+        activeScan: null,
+        stats: {
+          ...serverJobState.stats,
+          bannerMsg: `Auto-Paused: Unable to reach AI API (${err.message}). Check Settings and click Resume.`,
+        },
+      });
+      onToast?.(`Auto-paused: Unable to reach AI Base URL (${err.message})`, true);
       onNeedSettings?.();
     } else {
+      await persistServerJobState({
+        running: false,
+        paused: false,
+        stopping: false,
+        autoPausedReason: null,
+        activeScan: null,
+        stats: {
+          ...serverJobState.stats,
+          bannerMsg: `Error: ${err.message}`,
+        },
+      });
       onToast?.('Batch sync error: ' + err.message, true);
     }
   } finally {
@@ -589,6 +606,7 @@ export async function stopServerScanJob(onToast) {
       running: false,
       paused: false,
       stopping: false,
+      autoPausedReason: null,
       onlyScanIds: null,
       activeScan: null,
     });
@@ -597,6 +615,7 @@ export async function stopServerScanJob(onToast) {
   await persistServerJobState({
     paused: false,
     stopping: true,
+    autoPausedReason: null,
     stats: {
       ...serverJobState.stats,
       bannerMsg: 'Stopping after current scan finishes…',
@@ -608,6 +627,7 @@ export async function stopServerScanJob(onToast) {
 export async function clearServerJobHistory() {
   serverJobState.scanStatuses = {};
   serverJobState.activityFeed = [];
+  serverJobState.autoPausedReason = null;
   serverJobState.stats = {
     analyzed: 0,
     updated: 0,
@@ -637,6 +657,7 @@ async function persistLocalQueueState(overrides = {}) {
     await metaSet(LOCAL_QUEUE_META_KEY, {
       running: localQueueState.running,
       paused: localQueueState.paused,
+      autoPausedReason: localQueueState.autoPausedReason || null,
       chunk: localQueueState.chunk,
       chunkCustom: localQueueState.chunkCustom,
     });
@@ -679,6 +700,7 @@ export async function startLocalQueueJob({
     running: true,
     paused: false,
     stopping: false,
+    autoPausedReason: null,
     okCount: 0,
     errCount: 0,
   });
@@ -735,18 +757,32 @@ export async function startLocalQueueJob({
           okCount++;
           onRecordsChanged?.();
         } catch (err) {
-          q.status = 'error';
-          q.error = err.message === 'NO_SETTINGS' ? 'API settings missing' : err.message;
-          errCount++;
-          if (err.message === 'NO_SETTINGS') {
-            localQueueCancelFlag = true;
+          const isAiErr = isAiAccessibilityError(err);
+          if (isAiErr) {
+            // Revert candidate from error/running back to pending so user can resume seamlessly
+            q.status = 'pending';
+            q.error = `Auto-paused: ${err.message || 'Unable to access AI API'}`;
             q.ms = null;
             await put('queue', q);
             onQueueUpdated?.(q);
-            onToast?.('Please configure your AI API Base URL in Settings to continue.', true);
+
+            localQueuePauseFlag = true;
+            localQueueState.autoPausedReason = err.message || 'Unable to reach AI API';
+            await persistLocalQueueState({
+              running: false,
+              paused: true,
+              stopping: false,
+              autoPausedReason: err.message || 'Unable to reach AI API',
+              currentFile: null,
+            });
+            onToast?.(`Auto-paused queue: Unable to reach AI API (${err.message})`, true);
             onNeedSettings?.();
             break;
           }
+
+          q.status = 'error';
+          q.error = err.message || 'Extraction failed';
+          errCount++;
         }
 
         q.ms = Math.round(performance.now() - t0);
@@ -794,7 +830,7 @@ export async function pauseLocalQueueJob(onToast) {
 export async function cancelLocalQueueJob(onToast) {
   localQueueCancelFlag = true;
   localQueuePauseFlag = false;
-  await persistLocalQueueState({ paused: false, stopping: true });
+  await persistLocalQueueState({ paused: false, stopping: true, autoPausedReason: null });
   onToast?.('Cancelling after current file…');
 }
 
@@ -835,6 +871,7 @@ export async function bootPersistentJobs({
       chunk: chunkSaved || savedLocalMeta?.chunk || '25',
       chunkCustom: String(chunkCustomSaved || savedLocalMeta?.chunkCustom || '25'),
       paused: !!savedLocalMeta?.paused,
+      autoPausedReason: savedLocalMeta?.autoPausedReason || null,
     };
 
     // Reset any items left in 'running' state by a hard page reload

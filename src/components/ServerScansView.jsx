@@ -14,6 +14,7 @@ import {
   isScanApproved,
   isScanPending,
   isScanEmptyItems,
+  isAiAccessibilityError,
 } from '../lib/scanApi.js';
 import {
   getJobManagerSnapshot,
@@ -457,7 +458,12 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
           },
         },
       });
-      toast(`Scan #${scan.id} failed: ${err.message}`, true);
+      if (isAiAccessibilityError(err)) {
+        toast(`Cannot reach AI API for Scan #${scan.id}: ${err.message}. Please check Settings.`, true);
+        openSettings?.();
+      } else {
+        toast(`Scan #${scan.id} failed: ${err.message}`, true);
+      }
     }
   };
 
@@ -657,6 +663,114 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
 
   return (
     <React.Fragment>
+      {/* Auto-Pause AI Accessibility Alert Banner */}
+      {paused && jobSnap.autoPausedReason && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: '16px 20px',
+            borderRadius: 12,
+            background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.16) 0%, rgba(245, 158, 11, 0.16) 100%)',
+            border: '1px solid rgba(239, 68, 68, 0.45)',
+            boxShadow: '0 4px 16px rgba(239, 68, 68, 0.12)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 16,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flex: 1, minWidth: 280 }}>
+            <div
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: 10,
+                background: 'rgba(239, 68, 68, 0.25)',
+                border: '1px solid rgba(239, 68, 68, 0.5)',
+                color: '#ef4444',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 22,
+                flexShrink: 0,
+              }}
+            >
+              ⚠️
+            </div>
+            <div>
+              <div
+                style={{
+                  fontSize: 14.5,
+                  fontWeight: 700,
+                  color: '#fee2e2',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <span>Job Auto-Paused · Unable to Access AI API</span>
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 800,
+                    padding: '2px 8px',
+                    borderRadius: 6,
+                    background: '#ef4444',
+                    color: '#fff',
+                    letterSpacing: '0.05em',
+                  }}
+                >
+                  AI BASE URL UNREACHABLE
+                </span>
+              </div>
+              <div
+                style={{
+                  fontSize: 13,
+                  color: '#fca5a5',
+                  marginTop: 4,
+                  wordBreak: 'break-word',
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                }}
+              >
+                {jobSnap.autoPausedReason}
+              </div>
+              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>
+                The active scan was preserved in pending status without data loss. Check your AI Base URL, API key, or tunnel connection, then click Resume.
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexShrink: 0 }}>
+            <button
+              type="button"
+              className="btn"
+              onClick={openSettings}
+              style={{
+                borderColor: 'rgba(245, 158, 11, 0.5)',
+                background: 'rgba(245, 158, 11, 0.18)',
+                color: '#fbbf24',
+                fontWeight: 600,
+              }}
+            >
+              <Ic.gear className="ic" /> Open AI Settings
+            </button>
+            <button
+              type="button"
+              className="btn primary"
+              onClick={() => handleStartBatch({ selectedOnly: false, isResume: true })}
+              style={{
+                background: 'linear-gradient(135deg, #10b981, #059669)',
+                borderColor: '#059669',
+                fontWeight: 700,
+              }}
+            >
+              <Ic.play className="ic" /> Resume Job
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 2. Live AI Telemetry Spotlight (shown while running or paused with progress) */}
       {(running || paused || activityFeed.length > 0) && (
         <div className="v1-spotlight">
@@ -687,18 +801,28 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                       : running
                       ? 'run'
                       : paused
-                      ? 'short'
+                      ? jobSnap.autoPausedReason
+                        ? 'err'
+                        : 'short'
                       : 'ok')
                   }
                   style={
                     jobSnap.waitingNextPass
                       ? { fontSize: 11, background: '#f59e0b', color: '#111' }
+                      : paused && jobSnap.autoPausedReason
+                      ? { fontSize: 11, background: '#ef4444', color: '#fff' }
                       : { fontSize: 11 }
                   }
                 >
                   <span
                     className="dot"
-                    style={jobSnap.waitingNextPass ? { background: '#78350f' } : {}}
+                    style={
+                      jobSnap.waitingNextPass
+                        ? { background: '#78350f' }
+                        : paused && jobSnap.autoPausedReason
+                        ? { background: '#fff' }
+                        : {}
+                    }
                   />{' '}
                   {jobSnap.waitingNextPass
                     ? `24/7 OVERTIME IDLE · NEXT POLL IN ${jobSnap.nextPassCountdown || 0}S`
@@ -707,7 +831,9 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                       ? `24/7 OVERTIME RUNNER (PASS #${(jobSnap.passesCompleted || 0) + 1})`
                       : 'LIVE AI PIPELINE'
                     : paused
-                    ? 'PAUSED (SAVED IN DB)'
+                    ? jobSnap.autoPausedReason
+                      ? 'AUTO-PAUSED · AI UNREACHABLE'
+                      : 'PAUSED (SAVED IN DB)'
                     : 'SESSION LOG'}
                 </span>
                 {activeScan?.id && (
@@ -839,9 +965,24 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
                   type="button"
                   className="btn primary sm"
                   onClick={() => handleStartBatch({ selectedOnly: false, isResume: true })}
+                  style={
+                    jobSnap.autoPausedReason
+                      ? { background: 'linear-gradient(135deg, #10b981, #059669)', borderColor: '#059669' }
+                      : {}
+                  }
                 >
-                  <Ic.play className="ic" /> Resume Job
+                  <Ic.play className="ic" /> {jobSnap.autoPausedReason ? 'Resume Job (AI Fixed)' : 'Resume Job'}
                 </button>
+                {jobSnap.autoPausedReason && (
+                  <button
+                    type="button"
+                    className="btn sm"
+                    onClick={openSettings}
+                    style={{ borderColor: 'rgba(245, 158, 11, 0.5)', color: '#fbbf24' }}
+                  >
+                    <Ic.gear className="ic" /> AI Settings
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn sm"
@@ -1268,26 +1409,51 @@ export default function ServerScansView({ toast, openSettings, onRecordsChanged,
           {/* Action Control Bar */}
           <div className="row" style={{ marginBottom: 14 }}>
             {!running ? (
-              <button
-                type="button"
-                className="btn primary"
-                onClick={() => handleStartBatch({ selectedOnly: false, isResume: paused })}
-                disabled={!pageData.content.length}
-                style={continuousLoop ? { background: 'linear-gradient(135deg, #0284c7, #2563eb)', borderColor: '#1d4ed8' } : {}}
-              >
-                <Ic.play className="ic" />{' '}
-                {paused
-                  ? continuousLoop
-                    ? 'Resume 24/7 Overtime Loop'
-                    : 'Resume AI Page Sync'
-                  : continuousLoop
-                  ? `Start 24/7 Overtime Loop (${updateMode === 'batch' ? '⚡ 3x Batch' : 'Single'} · ${targetMode === 'pending_only' ? 'Pending' : 'Pending + 0-Item'})`
-                  : updateMode === 'batch'
-                  ? `⚡ Analyze in Batch (${pendingOnPage || pageData.content.length} scans · 3x Faster AI)`
-                  : skipApproved
-                  ? `Analyze Pending (${pendingOnPage}/${pageData.content.length})${autoNextPage ? ' · Auto-Next' : ''}`
-                  : `Analyze Page & Update Backend${autoNextPage ? ' (Auto-Next Page)' : ''}`}
-              </button>
+              <React.Fragment>
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={() => handleStartBatch({ selectedOnly: false, isResume: paused })}
+                  disabled={!pageData.content.length}
+                  style={
+                    paused && jobSnap.autoPausedReason
+                      ? { background: 'linear-gradient(135deg, #10b981, #059669)', borderColor: '#059669' }
+                      : continuousLoop
+                      ? { background: 'linear-gradient(135deg, #0284c7, #2563eb)', borderColor: '#1d4ed8' }
+                      : {}
+                  }
+                >
+                  <Ic.play className="ic" />{' '}
+                  {paused
+                    ? jobSnap.autoPausedReason
+                      ? 'Resume Job (Auto-Paused on AI Error)'
+                      : continuousLoop
+                      ? 'Resume 24/7 Overtime Loop'
+                      : 'Resume AI Page Sync'
+                    : continuousLoop
+                    ? `Start 24/7 Overtime Loop (${updateMode === 'batch' ? '⚡ 3x Batch' : 'Single'} · ${targetMode === 'pending_only' ? 'Pending' : 'Pending + 0-Item'})`
+                    : updateMode === 'batch'
+                    ? `⚡ Analyze in Batch (${pendingOnPage || pageData.content.length} scans · 3x Faster AI)`
+                    : skipApproved
+                    ? `Analyze Pending (${pendingOnPage}/${pageData.content.length})${autoNextPage ? ' · Auto-Next' : ''}`
+                    : `Analyze Page & Update Backend${autoNextPage ? ' (Auto-Next Page)' : ''}`}
+                </button>
+                {paused && jobSnap.autoPausedReason && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={openSettings}
+                    style={{
+                      borderColor: 'rgba(245, 158, 11, 0.5)',
+                      background: 'rgba(245, 158, 11, 0.15)',
+                      color: '#fbbf24',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <Ic.gear className="ic" /> Fix AI Settings
+                  </button>
+                )}
+              </React.Fragment>
             ) : (
               <React.Fragment>
                 {jobSnap.waitingNextPass && (

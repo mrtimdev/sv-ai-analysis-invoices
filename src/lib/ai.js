@@ -246,6 +246,108 @@ export async function fetchAIModels({ base, key, signal } = {}) {
   return sorted;
 }
 
+/**
+ * Detects whether an error indicates an inability to reach or access the AI API / Base URL.
+ * When true, running background jobs should immediately AUTO-PAUSE (rather than cascading
+ * failures across all scans), preserving the pending scan and alerting the user.
+ */
+export function isAiAccessibilityError(err) {
+  if (!err) return false;
+  const msg = String(err?.message || err?.error || err || '').toLowerCase();
+  const name = String(err?.name || '').toLowerCase();
+
+  // 1. Missing or unconfigured AI Settings
+  if (
+    msg.includes('no_settings') ||
+    msg.includes('api settings missing') ||
+    msg.includes('ai api base url is required') ||
+    msg.includes('configure your ai api base url') ||
+    msg.includes('ai base url')
+  ) {
+    return true;
+  }
+
+  // 2. Fetch / Network connection failure (offline, dropped Wi-Fi, server down, DNS failure)
+  if (
+    msg.includes('failed to fetch') ||
+    msg.includes('network error') ||
+    msg.includes('fetch failed') ||
+    msg.includes('load failed') ||
+    (name === 'typeerror' && (msg.includes('fetch') || msg.includes('network'))) ||
+    msg.includes('econnrefused') ||
+    msg.includes('err_connection_refused') ||
+    msg.includes('enotfound') ||
+    msg.includes('err_name_not_resolved') ||
+    msg.includes('etimedout') ||
+    msg.includes('err_connection_timed_out') ||
+    msg.includes('err_network') ||
+    msg.includes('net::err_') ||
+    msg.includes('connection refused') ||
+    msg.includes('unreachable') ||
+    msg.includes('unable to reach') ||
+    msg.includes('cannot connect') ||
+    msg.includes('timed out') ||
+    msg.includes('timeout')
+  ) {
+    return true;
+  }
+
+  // 3. Cloudflare tunnel or proxy drop
+  if (
+    msg.includes('tunnel url is currently active') ||
+    msg.includes('trycloudflare') ||
+    msg.includes('web server is down') ||
+    msg.includes('host error')
+  ) {
+    return true;
+  }
+
+  // 4. Browser Local Network Access or CORS restrictions
+  if (
+    msg.includes('local network access blocked') ||
+    msg.includes('cors') ||
+    msg.includes('cross-origin') ||
+    msg.includes('blocked by browser')
+  ) {
+    return true;
+  }
+
+  // 5. HTTP status codes indicating AI service accessibility/auth/quota/gateway failure
+  const statusMatch = msg.match(/(?:api|status|code|models\s*\()[:\s]*([0-9]{3})/i);
+  if (statusMatch) {
+    const code = parseInt(statusMatch[1], 10);
+    if (
+      code === 401 ||
+      code === 403 ||
+      code === 404 ||
+      code === 429 ||
+      code === 500 ||
+      code === 502 ||
+      code === 503 ||
+      code === 504 ||
+      (code >= 520 && code <= 526)
+    ) {
+      return true;
+    }
+  }
+
+  // 6. Keywords in error message regarding quota, rate limits, or empty choices
+  if (
+    msg.includes('quota exceeded') ||
+    msg.includes('rate limit') ||
+    msg.includes('too many requests') ||
+    msg.includes('empty api response') ||
+    msg.includes('unauthorized') ||
+    msg.includes('bad gateway') ||
+    msg.includes('service unavailable') ||
+    msg.includes('gateway timeout')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 export {
   getScanApiConfig,
   fetchScansPage,

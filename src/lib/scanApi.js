@@ -1,6 +1,7 @@
 /* Unauthenticated /v1 Scan API client + AI Analyze & Auto-Next-Page Sync Engine */
 import { getSettings } from './db.js';
-import { extractWithAI } from './ai.js';
+import { extractWithAI, isAiAccessibilityError } from './ai.js';
+export { isAiAccessibilityError };
 import { compressImage, num, uid } from './util.js';
 
 export const DEFAULT_SCAN_API_SETTINGS = {
@@ -984,6 +985,23 @@ export async function analyzeAndSyncScansPages({
           }
         }
       } catch (err) {
+        if (isAiAccessibilityError(err)) {
+          // AI Base URL or API is unreachable / unauthorized / quota exhausted / down.
+          // Revert candidate from processedScanIds so it remains pending for resumption!
+          processedScanIds.delete(String(scan.id));
+          onScanProgress({
+            scanId: scan.id,
+            scan,
+            page: currentPage,
+            indexOnPage,
+            totalOnPage: candidates.length,
+            stage: 'error',
+            error: err.message || 'AI API unreachable',
+            message: `AI Unreachable: ${err.message || 'Unable to access AI Base URL'}`,
+          });
+          throw err;
+        }
+
         totalFailed++;
         pageFailCount++;
         onScanProgress({
@@ -996,9 +1014,6 @@ export async function analyzeAndSyncScansPages({
           error: err.message || 'Analysis failed',
           message: err.message || 'Analysis failed',
         });
-        if (err.message === 'NO_SETTINGS') {
-          throw err;
-        }
         if (continuousLoop && !shouldStop()) {
           await new Promise((r) => setTimeout(r, 6000));
         }
@@ -1007,27 +1022,44 @@ export async function analyzeAndSyncScansPages({
 
     let candIdx = 0;
     const activePromises = new Set();
+    let fatalAiError = null;
 
-    while (candIdx < candidates.length || activePromises.size > 0) {
+    while ((candIdx < candidates.length || activePromises.size > 0) && !fatalAiError) {
       if (shouldStop() && activePromises.size === 0) break;
 
       const concurrency = getConcurrency();
-      while (!shouldStop() && candIdx < candidates.length && activePromises.size < concurrency) {
+      while (!fatalAiError && !shouldStop() && candIdx < candidates.length && activePromises.size < concurrency) {
         const curIdx = candIdx++;
         const candidateScan = candidates[curIdx];
-        const p = Promise.resolve().then(() => processCandidate(candidateScan, curIdx));
+        const p = Promise.resolve()
+          .then(() => processCandidate(candidateScan, curIdx))
+          .catch((err) => {
+            if (isAiAccessibilityError(err)) {
+              fatalAiError = err;
+            }
+          })
+          .finally(() => {
+            activePromises.delete(p);
+          });
         activePromises.add(p);
-        const done = () => activePromises.delete(p);
-        p.then(done, done);
       }
 
-      if (activePromises.size > 0) {
+      if (activePromises.size > 0 && !fatalAiError) {
         await Promise.race(activePromises);
       }
     }
 
+    // Wait for in-flight requests to settle cleanly if fatal AI error occurred
+    if (activePromises.size > 0) {
+      await Promise.allSettled(Array.from(activePromises));
+    }
+
     // Always flush any remaining batch payloads on this page (even if paused/stopped!)
     await flushBatch();
+
+    if (fatalAiError) {
+      throw fatalAiError;
+    }
 
     pagesProcessed++;
     onPageSynced({
