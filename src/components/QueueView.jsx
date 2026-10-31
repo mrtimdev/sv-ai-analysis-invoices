@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Select from 'react-select';
-import { getAll, put, get, del, clearStore, getSettings } from '../lib/db.js';
+import { getAll, put, del, clearStore, getSettings } from '../lib/db.js';
 import {
   getJobManagerSnapshot,
   subscribeJobManager,
@@ -92,7 +92,7 @@ export default function QueueView({ toast, openSettings, onRecordsChanged, openD
           done.length +
           ' completed job' +
           (done.length > 1 ? 's' : '') +
-          ' from the queue? Extracted records stay in Invoices.'
+          ' from the queue?'
       )
     )
       return;
@@ -107,7 +107,7 @@ export default function QueueView({ toast, openSettings, onRecordsChanged, openD
       !window.confirm(
         'Clear the entire queue (' +
           items.length +
-          ' jobs)? Extracted records already saved in Invoices are kept.'
+          ' jobs)?'
       )
     )
       return;
@@ -175,11 +175,10 @@ export default function QueueView({ toast, openSettings, onRecordsChanged, openD
   };
 
   const exportXls = async () => {
-    const done = items.filter((q) => q.status === 'done' && (q.record || q.recordId));
+    const done = items.filter((q) => q.status === 'done' && q.record);
     const recs = [];
     for (const q of done) {
-      const r = q.record || (q.recordId ? await get('invoices', q.recordId).catch(() => null) : null);
-      if (r) recs.push(r);
+      if (q.record) recs.push(q.record);
     }
     const res = await exportExcel(recs);
     if (res.ok) toast('Excel exported ✓');

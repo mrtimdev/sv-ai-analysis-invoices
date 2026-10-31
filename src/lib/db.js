@@ -1,30 +1,80 @@
-/* IndexedDB: invoices, queue, meta stores (v2 — same schema as previous app so existing data survives) */
+/* In-memory store (Zero IndexedDB storage)
+ * Purpose: Request -> Analyze -> Update pipeline without local database storage.
+ */
 
-let db = null;
-
-export function openDb(){
-  if(db) return Promise.resolve(db);
-  return new Promise((res, rej)=>{
-    const r = indexedDB.open("invoice_analyzer", 2);
-    r.onupgradeneeded = ()=>{
-      const d = r.result;
-      if(!d.objectStoreNames.contains("invoices")) d.createObjectStore("invoices", {keyPath:"id"});
-      if(!d.objectStoreNames.contains("queue")) d.createObjectStore("queue", {keyPath:"id"});
-      if(!d.objectStoreNames.contains("meta")) d.createObjectStore("meta", {keyPath:"k"});
-    };
-    r.onsuccess = ()=>{ db = r.result; res(db); };
-    r.onerror = ()=> rej(r.error);
-  });
+// If any legacy IndexedDB database exists in the browser, clean it up
+if (typeof window !== 'undefined' && typeof window.indexedDB !== 'undefined') {
+  try {
+    window.indexedDB.deleteDatabase('invoice_analyzer');
+  } catch (_) {}
 }
 
-const st = (name, mode)=> db.transaction(name, mode).objectStore(name);
-export const put = (name, rec)=> new Promise((res,rej)=>{ const q = st(name,"readwrite").put(rec); q.onsuccess=()=>res(rec); q.onerror=()=>rej(q.error); });
-export const getAll = (name)=> new Promise((res,rej)=>{ const q = st(name,"readonly").getAll(); q.onsuccess=()=>res(q.result||[]); q.onerror=()=>rej(q.error); });
-export const get = (name, id)=> new Promise((res,rej)=>{ const q = st(name,"readonly").get(id); q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error); });
-export const del = (name, id)=> new Promise((res,rej)=>{ const q = st(name,"readwrite").delete(id); q.onsuccess=()=>res(); q.onerror=()=>rej(q.error); });
-export const clearStore = (name)=> new Promise((res,rej)=>{ const q = st(name,"readwrite").clear(); q.onsuccess=()=>res(); q.onerror=()=>rej(q.error); });
-export const metaGet = (k)=> get("meta", k).then(r=> r ? r.v : undefined);
-export const metaSet = (k, v)=> put("meta", {k, v});
+const memoryStores = {
+  invoices: new Map(),
+  queue: new Map(),
+  meta: new Map(),
+};
+
+function getStore(name) {
+  if (!memoryStores[name]) {
+    memoryStores[name] = new Map();
+  }
+  return memoryStores[name];
+}
+
+export function openDb() {
+  return Promise.resolve(true);
+}
+
+export const put = (name, rec) => {
+  const store = getStore(name);
+  const id = rec?.id ?? rec?.k ?? (typeof rec === 'object' ? JSON.stringify(rec) : String(rec));
+  store.set(id, rec);
+  return Promise.resolve(rec);
+};
+
+export const getAll = (name) => {
+  const store = getStore(name);
+  return Promise.resolve(Array.from(store.values()));
+};
+
+export const get = (name, id) => {
+  const store = getStore(name);
+  return Promise.resolve(store.get(id));
+};
+
+export const del = (name, id) => {
+  const store = getStore(name);
+  store.delete(id);
+  return Promise.resolve();
+};
+
+export const clearStore = (name) => {
+  const store = getStore(name);
+  store.clear();
+  return Promise.resolve();
+};
+
+export const metaGet = (k) => {
+  try {
+    const raw = localStorage.getItem(`meta_${k}`);
+    if (raw !== null) {
+      return Promise.resolve(JSON.parse(raw));
+    }
+  } catch (_) {}
+  const store = getStore('meta');
+  const r = store.get(k);
+  return Promise.resolve(r ? r.v : undefined);
+};
+
+export const metaSet = (k, v) => {
+  try {
+    localStorage.setItem(`meta_${k}`, JSON.stringify(v));
+  } catch (_) {}
+  const store = getStore('meta');
+  store.set(k, { k, v });
+  return Promise.resolve({ k, v });
+};
 
 /* Settings in localStorage (with Vite env var fallbacks for Vercel deployment) */
 const SET_KEY = "invoice_analyzer_settings";

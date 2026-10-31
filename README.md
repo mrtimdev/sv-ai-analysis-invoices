@@ -11,7 +11,7 @@ Standalone React + Vite application for extracting KHB document headers & line i
   - Automatically advances to the next page when a page finishes analyzing & syncing.
   - Includes **Table** and **Visual Cards** view modes plus a side-by-side **Scan Inspector** drawer.
 - **Persistent Background Job Engine (`src/lib/jobManager.js`)**:
-  - Both **Server Scans (`/v1`)** and **Local Batch Queue** run in a singleton background service and checkpoint live state into IndexedDB (`meta` store), surviving tab switches and page refreshes automatically.
+  - Both **Server Scans (`/v1`)** and **Local Batch Queue** run in a singleton background service in-memory with zero local database storage (Request -> Analyze -> Update pipeline).
 - **Separate `/v1` API & Vision AI Settings (`src/components/SettingsModal.jsx`)**:
   - Configure AI Vision API (`base`, `key`, `model`) and `/v1` Scan Backend (`apiServerBase`, `v1ListScansPath`, `v1SingleScanPath`, `v1UpdateMode`) independently in the UI or via `VITE_*` environment variables.
 

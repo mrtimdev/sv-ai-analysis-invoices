@@ -1,10 +1,9 @@
-/* Global Background Job Runner + Persistent IndexedDB State for:
+/* Global Background Job Runner for:
  * 1) Server Scans (/v1) AI Analyze & Auto-Next-Page Sync Job
  * 2) Local Batch Queue AI Extraction Job
  *
- * Continues running when switching tabs inside the app, and persists live state
- * in IndexedDB (`meta` store) so refreshing or re-opening the page automatically
- * restores & resumes active jobs without losing progress.
+ * In-memory execution pipeline (Zero IndexedDB database storage).
+ * Frontend purpose is strictly Request -> Analyze -> Update.
  */
 import { getAll, put, metaGet, metaSet, getSettings } from './db.js';
 import {
@@ -151,14 +150,18 @@ async function persistServerJobState(overrides = {}) {
   };
   emitChange();
   try {
-    // Keep at most 150 scanStatuses and 30 activityFeed items in IndexedDB to stay fast
-    const statusEntries = Object.entries(serverJobState.scanStatuses || {});
-    const trimmedStatuses = Object.fromEntries(statusEntries.slice(-150));
     const toStore = {
-      ...serverJobState,
-      scanStatuses: trimmedStatuses,
-      activityFeed: (serverJobState.activityFeed || []).slice(0, 30),
-      lastPageData: null, // Avoid storing full page payload in meta
+      page: serverJobState.page,
+      size: serverJobState.size,
+      sort: serverJobState.sort,
+      filters: serverJobState.filters,
+      updateMode: serverJobState.updateMode,
+      autoNextPage: serverJobState.autoNextPage,
+      skipApproved: serverJobState.skipApproved,
+      continuousLoop: serverJobState.continuousLoop,
+      loopInterval: serverJobState.loopInterval,
+      reanalyzeEmptyItems: serverJobState.reanalyzeEmptyItems,
+      targetMode: serverJobState.targetMode,
     };
     await metaSet(SERVER_JOB_META_KEY, toStore);
   } catch (_) {}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { openDb, getAll, metaGet, metaSet } from './lib/db.js';
+import { getAll } from './lib/db.js';
 import {
   getJobManagerSnapshot,
   subscribeJobManager,
@@ -45,27 +45,29 @@ export default function App() {
 
   const switchTab = useCallback((nextTab) => {
     setTab(nextTab);
-    metaSet('activeTab', nextTab).catch(() => {});
+    try {
+      localStorage.setItem('activeTab', nextTab);
+    } catch (_) {}
   }, []);
 
   useEffect(() => {
-    openDb()
-      .then(async () => {
-        const savedTab = await metaGet('activeTab');
-        if (savedTab && TABS.some((t) => t.id === savedTab)) {
-          setTab(savedTab);
-        } else {
-          setTab('server');
-        }
-        await refreshQueueCount();
-        setReady(true);
-        await bootPersistentJobs({
-          onToast: toast,
-          onRecordsChanged: refreshQueueCount,
-          onNeedSettings: () => setSettingsOpen(true),
-        });
-      })
-      .catch(() => toast('Storage unavailable in this browser', true));
+    try {
+      const savedTab = localStorage.getItem('activeTab');
+      if (savedTab && TABS.some((t) => t.id === savedTab)) {
+        setTab(savedTab);
+      } else {
+        setTab('server');
+      }
+    } catch (_) {
+      setTab('server');
+    }
+    refreshQueueCount();
+    setReady(true);
+    bootPersistentJobs({
+      onToast: toast,
+      onRecordsChanged: refreshQueueCount,
+      onNeedSettings: () => setSettingsOpen(true),
+    });
   }, [refreshQueueCount, toast]);
 
   useEffect(() => {
